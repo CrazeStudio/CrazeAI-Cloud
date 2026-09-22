@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
-import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
@@ -46,18 +45,19 @@ public class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(28, 32, 28, 20);
-        root.setBackgroundColor(Color.rgb(8,8,8));
+        root.setBackgroundColor(Color.rgb(8, 8, 8));
 
         TextView title = text("CrazeAI Cloud", 26, Color.WHITE);
         root.addView(title);
 
-        status = text("Ready", 14, Color.LTGRAY);
+        status = text("Connected to CrazeAI Cloud", 14, Color.LTGRAY);
         root.addView(status);
 
-        server = field("https://YOUR-RENDER-SERVICE.onrender.com");
+        server = field("Server URL");
+        server.setText("https://crazeai-cloud.onrender.com");
         root.addView(server);
 
-        message = field("Message CrazeAI...");
+        message = field("Ask CrazeAI...");
         message.setMinLines(4);
         root.addView(message, new LinearLayout.LayoutParams(-1, 0, 1));
 
@@ -66,7 +66,7 @@ public class MainActivity extends Activity {
         send.setOnClickListener(v -> sendMessage());
         root.addView(send);
 
-        answer = text("CrazeAI responses will appear here.", 16, Color.WHITE);
+        answer = text("Your CrazeAI response will appear here.", 16, Color.WHITE);
         answer.setPadding(0, 24, 0, 0);
         root.addView(answer);
 
@@ -109,10 +109,12 @@ public class MainActivity extends Activity {
             @Override public void onFailure(Call c, IOException e) {
                 retryOrTimeout(base, msg, attempt);
             }
+
             @Override public void onResponse(Call c, Response r) throws IOException {
-                boolean ready = r.isSuccessful() && r.body() != null &&
-                        r.body().string().contains(""model":"ready"");
+                String raw = r.body() == null ? "" : r.body().string();
+                boolean ready = r.isSuccessful() && raw.contains("\"model\":\"ready\"");
                 r.close();
+
                 if (ready) {
                     runOnUiThread(() -> status.setText("Ready — sending..."));
                     callChat(base, msg);
@@ -131,6 +133,7 @@ public class MainActivity extends Activity {
             });
             return;
         }
+
         runOnUiThread(() -> status.setText("Waking CrazeAI... " + ((attempt + 1) * 2) + "s"));
         handler.postDelayed(() -> waitForBackend(base, msg, attempt + 1), 2000);
     }
@@ -139,6 +142,7 @@ public class MainActivity extends Activity {
         try {
             JSONObject body = new JSONObject();
             body.put("message", msg);
+
             Request r = new Request.Builder()
                     .url(base + "/api/chat")
                     .post(RequestBody.create(body.toString(), JSON))
@@ -148,6 +152,7 @@ public class MainActivity extends Activity {
                 @Override public void onFailure(Call c, IOException e) {
                     finish("Network error: " + e.getMessage());
                 }
+
                 @Override public void onResponse(Call c, Response r) throws IOException {
                     String raw = r.body() == null ? "" : r.body().string();
                     try {
@@ -155,6 +160,8 @@ public class MainActivity extends Activity {
                         finish(obj.optString("response", obj.optString("detail", raw)));
                     } catch (Exception e) {
                         finish(raw);
+                    } finally {
+                        r.close();
                     }
                 }
             });
