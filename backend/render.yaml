@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: crazeai-cloud
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: |
+      python -m pip install --upgrade pip
+      pip install -r requirements.txt
+      git clone --depth 1 https://github.com/ggml-org/llama.cpp.git /opt/llama.cpp
+      cmake -S /opt/llama.cpp -B /opt/llama.cpp/build -DGGML_NATIVE=OFF -DLLAMA_BUILD_SERVER=ON -DCMAKE_BUILD_TYPE=Release
+      cmake --build /opt/llama.cpp/build --config Release -j2 --target llama-server
+    startCommand: bash start.sh
+    healthCheckPath: /health
+    envVars:
+      - key: MODEL_URL
+        value: https://huggingface.co/bartowski/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf?download=true
+      - key: MODEL_FILE
+        value: /opt/models/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf
+      - key: LLAMA_PORT
+        value: "8081"
+      - key: LLAMA_CTX
+        value: "4096"
+      - key: LLAMA_THREADS
+        value: "2"
+      - key: MAX_TOKENS
+        value: "512"
