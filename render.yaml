@@ -6,9 +6,9 @@ services:
     buildCommand: |
       python -m pip install --upgrade pip
       pip install -r backend/requirements.txt
-      git clone --depth 1 https://github.com/ggml-org/llama.cpp.git backend/llama.cpp
-      cmake -S backend/llama.cpp -B backend/llama.cpp/build -DGGML_NATIVE=OFF -DLLAMA_BUILD_SERVER=ON -DCMAKE_BUILD_TYPE=Release
-      cmake --build backend/llama.cpp/build --config Release -j2 --target llama-server
+      git clone --depth 1 https://github.com/ggml-org/llama.cpp.git llama.cpp
+      cmake -S llama.cpp -B llama.cpp/build -DGGML_NATIVE=OFF -DLLAMA_BUILD_SERVER=ON -DCMAKE_BUILD_TYPE=Release
+      cmake --build llama.cpp/build --config Release -j2 --target llama-server
     startCommand: bash backend/start.sh
     healthCheckPath: /health
     envVars:
@@ -19,7 +19,7 @@ services:
       - key: MODEL_DIR
         value: /tmp/crazeai-models
       - key: LLAMA_BIN
-        value: ./backend/llama.cpp/build/bin/llama-server
+        value: ./llama.cpp/build/bin/llama-server
       - key: LLAMA_PORT
         value: "8081"
       - key: LLAMA_CTX
