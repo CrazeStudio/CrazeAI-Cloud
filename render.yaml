@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: crazeai-cloud
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: MODEL_IDLE_SECONDS
+        value: "300"
+      - key: N_CTX
+        value: "1024"
+      - key: MAX_TOKENS
+        value: "256"
