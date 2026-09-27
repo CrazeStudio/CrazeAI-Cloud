@@ -11,28 +11,25 @@ MODEL_PATH=Path(os.getenv("MODEL_PATH","models/Qwen3-0.6B-Q2_K.gguf")).resolve()
 LLAMA_DIR=Path(os.getenv("LLAMA_DIR","llama")).resolve()
 LLAMA_PORT=int(os.getenv("LLAMA_PORT","8081")); IDLE_SECONDS=int(os.getenv("MODEL_IDLE_SECONDS","300"))
 MAX_TOKENS=int(os.getenv("MAX_TOKENS","192")); N_CTX=int(os.getenv("N_CTX","512")); N_THREADS=int(os.getenv("N_THREADS","2"))
-app=FastAPI(title="CrazeAI Cloud",version="3.0.0")
-_process:Optional[subprocess.Popen]=None; _process_lock=threading.Lock(); _download_lock=threading.Lock(); _unload_timer=None; _last_used=0.0; _startup_error=None
+app=FastAPI(title="CrazeAI Cloud",version="3.1.0")
+_process:Optional[subprocess.Popen]=None; _process_lock=threading.Lock(); _download_lock=threading.Lock(); _last_used=0.0; _startup_error=None
 class ChatRequest(BaseModel): message:str=Field(min_length=1,max_length=12000)
 class ChatResponse(BaseModel): response:str
 
 def download_file(url,destination,label):
     destination.parent.mkdir(parents=True,exist_ok=True); temp=destination.with_suffix(destination.suffix+".part"); started=time.monotonic(); last=-1
     headers={"User-Agent":"CrazeAI-Cloud"}
-    if temp.exists():
-        size=temp.stat().st_size
-        if size: headers["Range"]=f"bytes={size}-"
+    if temp.exists() and temp.stat().st_size: headers["Range"]=f"bytes={temp.stat().st_size}-"
     with httpx.stream("GET",url,follow_redirects=True,timeout=None,headers=headers) as r:
-        r.raise_for_status(); total=int(r.headers.get("content-length","0")); downloaded=temp.stat().st_size if temp.exists() and r.status_code==206 else 0
-        mode="ab" if downloaded and r.status_code==206 else "wb"
+        r.raise_for_status(); append=r.status_code==206 and temp.exists(); base=temp.stat().st_size if append else 0
+        total=int(r.headers.get("content-length","0"))+base if append else int(r.headers.get("content-length","0")); downloaded=base; mode="ab" if append else "wb"
         with open(temp,mode) as f:
             for chunk in r.iter_bytes(1024*1024):
                 if chunk:
                     f.write(chunk); downloaded+=len(chunk)
                     if total:
-                        pct=int(downloaded*100/(total+(temp.stat().st_size-downloaded if r.status_code==206 else 0)))
-                        if pct>=last+5 or pct==100:
-                            print(f"[CrazeAI] {label}: {pct}% ({downloaded/1048576:.1f} MB)",flush=True); last=pct
+                        pct=min(100,int(downloaded*100/total))
+                        if pct>=last+5 or pct==100: print(f"[CrazeAI] {label}: {pct}% ({downloaded/1048576:.1f} MB)",flush=True); last=pct
     temp.replace(destination); print(f"[CrazeAI] {label}: download complete in {time.monotonic()-started:.1f}s",flush=True)
 
 def ensure_model():
@@ -42,11 +39,15 @@ def ensure_model():
         print("[CrazeAI] Downloading GGUF to disk (streaming, low RAM)...",flush=True); download_file(MODEL_URL,MODEL_PATH,"GGUF")
 
 def llama_url():
+    api="https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
     with httpx.Client(timeout=30,follow_redirects=True,headers={"Accept":"application/vnd.github+json","User-Agent":"CrazeAI-Cloud"}) as c:
-        r=c.get("https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"); r.raise_for_status(); assets=r.json().get("assets",[])
-        for a in assets:
-            if a.get("name","").endswith("-bin-ubuntu-x64.tar.gz"): return a["browser_download_url"]
-    raise RuntimeError("No Ubuntu x64 llama.cpp release asset was found")
+        r=c.get(api); r.raise_for_status(); release=r.json(); assets=release.get("assets",[])
+    # Current llama.cpp release workflow uses this exact Ubuntu x64 CPU asset pattern.
+    preferred=[a for a in assets if a.get("name","").lower().endswith("-bin-ubuntu-x64.tar.gz")]
+    if not preferred:
+        names=[a.get("name","") for a in assets]
+        raise RuntimeError(f"No Ubuntu x64 llama.cpp asset found in release {release.get('tag_name','unknown')}. Assets: {names[:12]}")
+    return preferred[0]["browser_download_url"]
 
 def find_server():
     xs=[p for p in LLAMA_DIR.rglob("llama-server") if p.is_file()]; return sorted(xs,key=lambda p:len(str(p)))[0].resolve() if xs else None
@@ -95,8 +96,7 @@ def start_model():
     raise RuntimeError("Timed out while loading the GGUF model")
 
 def generate(msg):
-    start_model()
-    payload={"messages":[{"role":"system","content":"You are CrazeAI, a helpful coding-focused AI assistant. Give accurate, concise answers."},{"role":"user","content":msg}],"temperature":0.2,"top_p":0.9,"max_tokens":MAX_TOKENS,"stream":False}
+    start_model(); payload={"messages":[{"role":"system","content":"You are CrazeAI, a helpful coding-focused AI assistant. Give accurate, concise answers."},{"role":"user","content":msg}],"temperature":0.2,"top_p":0.9,"max_tokens":MAX_TOKENS,"stream":False}
     with httpx.Client(timeout=300) as c:r=c.post(f"http://127.0.0.1:{LLAMA_PORT}/v1/chat/completions",json=payload); r.raise_for_status(); data=r.json()
     global _last_used; _last_used=time.monotonic(); return data["choices"][0]["message"]["content"].strip()
 
@@ -104,8 +104,7 @@ def generate(msg):
 async def boot():
     async def worker():
         global _startup_error
-        try:
-            print("[CrazeAI] Startup: preparing model...",flush=True); await asyncio.to_thread(start_model); print("[CrazeAI] Startup: model ready.",flush=True)
+        try: print("[CrazeAI] Startup: preparing model...",flush=True); await asyncio.to_thread(start_model); print("[CrazeAI] Startup: model ready.",flush=True)
         except Exception as e:_startup_error=str(e); print(f"[CrazeAI] Startup failed: {e}",flush=True)
     asyncio.create_task(worker())
 
@@ -113,8 +112,7 @@ async def boot():
 async def root():return "<html><body style='background:#0b0b0b;color:white;font-family:Arial;text-align:center;padding:50px'><h1 style='color:#ff8a00'>CrazeAI Cloud</h1><p>Model startup in background. Check /health.</p></body></html>"
 @app.get("/health")
 async def health():
-    running=_process is not None and _process.poll() is None
-    return {"status":"ok","service":"online","model":"Qwen3-0.6B-Q2_K","model_downloaded":MODEL_PATH.exists(),"model_loaded":running and ready(),"starting":bool(not running and not _startup_error),"startup_error":_startup_error}
+    running=_process is not None and _process.poll() is None; return {"status":"ok","service":"online","model":"Qwen3-0.6B-Q2_K","model_downloaded":MODEL_PATH.exists(),"model_loaded":running and ready(),"starting":bool(not running and not _startup_error),"startup_error":_startup_error}
 async def handle(req):
     try:return ChatResponse(response=await asyncio.to_thread(generate,req.message))
     except Exception as e:print(f"[CrazeAI] Request failed: {e}",flush=True);raise HTTPException(503,detail=f"CrazeAI unavailable: {e}")
