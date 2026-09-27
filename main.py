@@ -21,7 +21,7 @@ MAX_TOKENS = int(os.getenv("MAX_TOKENS", "256"))
 N_CTX = int(os.getenv("N_CTX", "1024"))
 N_THREADS = int(os.getenv("N_THREADS", str(max(1, (os.cpu_count() or 2) - 1))))
 
-app = FastAPI(title="CrazeAI Cloud", version="2.7.0")
+app = FastAPI(title="CrazeAI Cloud", version="2.7.1")
 _process: Optional[subprocess.Popen] = None
 _process_lock = threading.Lock()
 _download_lock = threading.Lock()
@@ -71,11 +71,15 @@ def ensure_model_downloaded():
 def llama_asset_url():
     api = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
     with httpx.Client(timeout=30, follow_redirects=True, headers={"Accept":"application/vnd.github+json","User-Agent":"CrazeAI-Cloud"}) as c:
-        release = c.get(api).raise_for_status() or c.get(api).json()
+        response = c.get(api)
+        response.raise_for_status()
+        release = response.json()
         assets = release.get("assets", [])
         tag_file = next((a for a in assets if a.get("name") == "nightly-tag.txt"), None)
         if tag_file:
-            tag = c.get(tag_file["browser_download_url"]).text.strip()
+            tag_response = c.get(tag_file["browser_download_url"])
+            tag_response.raise_for_status()
+            tag = tag_response.text.strip()
             if tag:
                 rr = c.get(f"https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/{tag}")
                 rr.raise_for_status()
@@ -157,7 +161,9 @@ def start_model():
         lib_dirs = {str(server.parent), str(LLAMA_DIR)}
         for p in LLAMA_DIR.rglob("*.so*"):
             lib_dirs.add(str(p.parent))
-        env["LD_LIBRARY_PATH"] = ":".join(lib_dirs | ({env["LD_LIBRARY_PATH"]} if env.get("LD_LIBRARY_PATH") else set()))
+        if env.get("LD_LIBRARY_PATH"):
+            lib_dirs.add(env["LD_LIBRARY_PATH"])
+        env["LD_LIBRARY_PATH"] = ":".join(sorted(lib_dirs))
         print(f"[CrazeAI] Starting {server} with {MODEL_PATH}", flush=True)
         _process = subprocess.Popen([str(server), "-m", str(MODEL_PATH), "--host", "127.0.0.1", "--port", str(LLAMA_PORT), "-c", str(N_CTX), "-t", str(N_THREADS), "-b", "64", "--no-webui"], cwd=str(server.parent), env=env, stdout=log_file, stderr=subprocess.STDOUT, text=True)
         _last_used = time.monotonic()
@@ -176,7 +182,9 @@ def generate(message: str):
     global _last_used
     payload = {"messages":[{"role":"system","content":"You are CrazeAI, a helpful coding-focused AI assistant. Give accurate, concise answers."},{"role":"user","content":message}],"temperature":0.2,"top_p":0.9,"max_tokens":MAX_TOKENS,"stream":False}
     with httpx.Client(timeout=300) as c:
-        r=c.post(f"http://127.0.0.1:{LLAMA_PORT}/v1/chat/completions",json=payload); r.raise_for_status(); data=r.json()
+        r=c.post(f"http://127.0.0.1:{LLAMA_PORT}/v1/chat/completions",json=payload)
+        r.raise_for_status()
+        data=r.json()
     _last_used=time.monotonic(); schedule_unload()
     return data["choices"][0]["message"]["content"].strip()
 
