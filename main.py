@@ -23,7 +23,7 @@ MAX_TOKENS = int(os.getenv("MAX_TOKENS", "256"))
 N_CTX = int(os.getenv("N_CTX", "1024"))
 N_THREADS = int(os.getenv("N_THREADS", str(max(1, (os.cpu_count() or 2) - 1))))
 
-app = FastAPI(title="CrazeAI Cloud", version="2.3.0")
+app = FastAPI(title="CrazeAI Cloud", version="2.3.1")
 _process: Optional[subprocess.Popen] = None
 _process_lock = threading.Lock()
 _download_lock = threading.Lock()
@@ -57,6 +57,19 @@ def ensure_model_downloaded() -> None:
         download_file(MODEL_URL, MODEL_PATH)
         print("[CrazeAI] GGUF ready.", flush=True)
 
+def get_llama_release_url() -> str:
+    api = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
+    with httpx.Client(timeout=30, follow_redirects=True) as client:
+        r = client.get(api, headers={"Accept": "application/vnd.github+json"})
+        r.raise_for_status()
+        release = r.json()
+    assets = release.get("assets", [])
+    for asset in assets:
+        name = asset.get("name", "")
+        if name.startswith("llama-") and name.endswith("-bin-ubuntu-x64.tar.gz"):
+            return asset["browser_download_url"]
+    raise RuntimeError("No Ubuntu x64 llama.cpp release asset was found")
+
 def ensure_llama_server() -> None:
     if LLAMA_SERVER.exists():
         LLAMA_SERVER.chmod(0o755)
@@ -65,9 +78,8 @@ def ensure_llama_server() -> None:
         if LLAMA_SERVER.exists():
             return
         LLAMA_DIR.mkdir(parents=True, exist_ok=True)
-        # Pinned prebuilt Ubuntu x64 llama.cpp release. It is downloaded only on first /api/chat.
-        url = "https://github.com/ggml-org/llama.cpp/releases/download/b5814/llama-b5814-bin-ubuntu-x64.tar.gz"
-        print("[CrazeAI] First chat request: downloading llama-server...", flush=True)
+        url = get_llama_release_url()
+        print(f"[CrazeAI] First chat request: downloading llama.cpp from {url}", flush=True)
         download_file(url, LLAMA_ARCHIVE)
         with tarfile.open(LLAMA_ARCHIVE, "r:gz") as tar:
             tar.extractall(LLAMA_DIR, filter="data")
