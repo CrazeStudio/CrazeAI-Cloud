@@ -3,7 +3,7 @@ services:
     name: crazeai-cloud
     runtime: python
     plan: free
-    buildCommand: pip install -r requirements.txt
+    buildCommand: bash render-build.sh && pip install -r requirements.txt
     startCommand: python main.py
     healthCheckPath: /health
     autoDeploy: true
@@ -13,6 +13,6 @@ services:
       - key: MODEL_IDLE_SECONDS
         value: "300"
       - key: N_CTX
-        value: "1024"
+        value: "512"
       - key: MAX_TOKENS
-        value: "256"
+        value: "192"
