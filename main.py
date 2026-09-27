@@ -23,7 +23,7 @@ MAX_TOKENS = int(os.getenv("MAX_TOKENS", "256"))
 N_CTX = int(os.getenv("N_CTX", "1024"))
 N_THREADS = int(os.getenv("N_THREADS", str(max(1, (os.cpu_count() or 2) - 1))))
 
-app = FastAPI(title="CrazeAI Cloud", version="2.5.0")
+app = FastAPI(title="CrazeAI Cloud", version="2.6.0")
 _process: Optional[subprocess.Popen] = None
 _process_lock = threading.Lock()
 _download_lock = threading.Lock()
@@ -64,11 +64,12 @@ def download_file(url: str, destination: Path, label: str) -> None:
 
 def ensure_model_downloaded() -> None:
     if MODEL_PATH.exists() and MODEL_PATH.stat().st_size > 0:
+        print(f"[CrazeAI] Using cached GGUF: {MODEL_PATH} ({MODEL_PATH.stat().st_size / 1024 / 1024:.1f} MB)", flush=True)
         return
     with _download_lock:
         if MODEL_PATH.exists() and MODEL_PATH.stat().st_size > 0:
             return
-        print("[CrazeAI] First chat request: downloading GGUF...", flush=True)
+        print("[CrazeAI] No cached GGUF found; downloading...", flush=True)
         download_file(MODEL_URL, MODEL_PATH, "GGUF")
         print("[CrazeAI] GGUF ready.", flush=True)
 
@@ -93,7 +94,7 @@ def get_llama_release_url() -> str:
         name = asset.get("name", "")
         if name.startswith("llama-") and name.endswith("-bin-ubuntu-x64.tar.gz"):
             return asset["browser_download_url"]
-    return "https://github.com/ggml-org/llama.cpp/releases/download/b11146/llama-b11146-bin-ubuntu-x64.tar.gz"
+    raise RuntimeError("No Ubuntu x64 llama.cpp release asset was found")
 
 def ensure_llama_server() -> None:
     if LLAMA_SERVER.exists():
@@ -104,7 +105,7 @@ def ensure_llama_server() -> None:
             return
         LLAMA_DIR.mkdir(parents=True, exist_ok=True)
         url = get_llama_release_url()
-        print("[CrazeAI] First chat request: downloading llama.cpp...", flush=True)
+        print("[CrazeAI] No cached llama.cpp found; downloading...", flush=True)
         download_file(url, LLAMA_ARCHIVE, "llama.cpp")
         with tarfile.open(LLAMA_ARCHIVE, "r:gz") as tar:
             tar.extractall(LLAMA_DIR, filter="data")
@@ -161,11 +162,19 @@ def start_model() -> None:
         print(f"[CrazeAI] Starting llama-server: model={MODEL_PATH} ctx={N_CTX} threads={N_THREADS}", flush=True)
         log_path = LLAMA_DIR / "llama-server.log"
         log_file = open(log_path, "a", buffering=1)
+        env = os.environ.copy()
+        # The release archive contains libllama-server-impl.so beside llama-server.
+        # Point the dynamic loader at the extracted release directory.
+        library_dirs = [str(LLAMA_SERVER.parent), str(LLAMA_DIR)]
+        for p in list(LLAMA_DIR.rglob("libllama-server-impl.so")):
+            library_dirs.append(str(p.parent))
+        existing = env.get("LD_LIBRARY_PATH", "")
+        env["LD_LIBRARY_PATH"] = ":".join(dict.fromkeys(library_dirs + ([existing] if existing else [])))
         _process = subprocess.Popen([
             str(LLAMA_SERVER), "-m", str(MODEL_PATH),
             "--host", "127.0.0.1", "--port", str(LLAMA_PORT),
             "-c", str(N_CTX), "-t", str(N_THREADS), "-b", "64", "--no-webui"
-        ], stdout=log_file, stderr=subprocess.STDOUT, text=True)
+        ], stdout=log_file, stderr=subprocess.STDOUT, text=True, env=env, cwd=str(LLAMA_SERVER.parent))
         _last_used = time.monotonic()
     deadline = time.monotonic() + 300
     while time.monotonic() < deadline:
@@ -196,7 +205,7 @@ def generate(message: str) -> str:
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    return """<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'><title>CrazeAI Cloud</title><style>body{font-family:Arial,sans-serif;background:#0b0b0b;color:#fff;display:grid;place-items:center;min-height:100vh;margin:0}main{max-width:620px;padding:32px;text-align:center}h1{color:#ff8a00}code{background:#171717;padding:4px 7px;border-radius:6px}</style></head><body><main><h1>CrazeAI Cloud</h1><p>API is online.</p><p>Model uses lazy loading and is only downloaded/loaded when <code>/api/chat</code> is called.</p><p><a href='/health' style='color:#ff8a00'>Health status</a></p></main></body></html>"""
+    return """<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'><title>CrazeAI Cloud</title><style>body{font-family:Arial,sans-serif;background:#0b0b0b;color:#fff;display:grid;place-items:center;min-height:100vh;margin:0}main{max-width:620px;padding:32px;text-align:center}h1{color:#ff8a00}code{background:#171717;padding:4px 7px;border-radius:6px}</style></head><body><main><h1>CrazeAI Cloud</h1><p>API is online.</p><p>Model uses lazy loading and cached files when available.</p><p><a href='/health' style='color:#ff8a00'>Health status</a></p></main></body></html>"""
 
 @app.get("/health")
 async def health():
