@@ -23,7 +23,7 @@ MAX_TOKENS = int(os.getenv("MAX_TOKENS", "256"))
 N_CTX = int(os.getenv("N_CTX", "1024"))
 N_THREADS = int(os.getenv("N_THREADS", str(max(1, (os.cpu_count() or 2) - 1))))
 
-app = FastAPI(title="CrazeAI Cloud", version="2.3.1")
+app = FastAPI(title="CrazeAI Cloud", version="2.4.0")
 _process: Optional[subprocess.Popen] = None
 _process_lock = threading.Lock()
 _download_lock = threading.Lock()
@@ -36,16 +36,36 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
 
-def download_file(url: str, destination: Path) -> None:
+def download_file(url: str, destination: Path, label: str) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     temp = destination.with_suffix(destination.suffix + ".part")
+    started = time.monotonic()
+    last_report = -1
     with httpx.stream("GET", url, follow_redirects=True, timeout=None) as r:
         r.raise_for_status()
+        total = int(r.headers.get("content-length", "0"))
+        downloaded = 0
         with open(temp, "wb") as f:
             for chunk in r.iter_bytes(chunk_size=1024 * 1024):
-                if chunk:
-                    f.write(chunk)
+                if not chunk:
+                    continue
+                f.write(chunk)
+                downloaded += len(chunk)
+                if total:
+                    percent = int(downloaded * 100 / total)
+                    if percent >= last_report + 5 or percent == 100:
+                        elapsed = max(time.monotonic() - started, 0.001)
+                        speed = downloaded / elapsed / 1024 / 1024
+                        print(f"[CrazeAI] {label}: {percent}% ({downloaded / 1024 / 1024:.1f}/{total / 1024 / 1024:.1f} MB) {speed:.1f} MB/s", flush=True)
+                        last_report = percent
+                elif downloaded // (100 * 1024 * 1024) > max(last_report, -1):
+                    elapsed = max(time.monotonic() - started, 0.001)
+                    speed = downloaded / elapsed / 1024 / 1024
+                    print(f"[CrazeAI] {label}: {downloaded / 1024 / 1024:.0f} MB downloaded ({speed:.1f} MB/s)", flush=True)
+                    last_report = downloaded // (100 * 1024 * 1024)
     temp.replace(destination)
+    elapsed = max(time.monotonic() - started, 0.001)
+    print(f"[CrazeAI] {label}: download complete in {elapsed:.1f}s", flush=True)
 
 def ensure_model_downloaded() -> None:
     if MODEL_PATH.exists() and MODEL_PATH.stat().st_size > 0:
@@ -54,21 +74,34 @@ def ensure_model_downloaded() -> None:
         if MODEL_PATH.exists() and MODEL_PATH.stat().st_size > 0:
             return
         print("[CrazeAI] First chat request: downloading GGUF...", flush=True)
-        download_file(MODEL_URL, MODEL_PATH)
+        download_file(MODEL_URL, MODEL_PATH, "GGUF")
         print("[CrazeAI] GGUF ready.", flush=True)
 
 def get_llama_release_url() -> str:
+    # GitHub's current stable release may contain only a nightly pointer.
+    # Resolve that pointer, then select the Ubuntu x64 CPU archive.
     api = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
     with httpx.Client(timeout=30, follow_redirects=True) as client:
-        r = client.get(api, headers={"Accept": "application/vnd.github+json"})
+        r = client.get(api, headers={"Accept": "application/vnd.github+json", "User-Agent": "CrazeAI-Cloud"})
         r.raise_for_status()
         release = r.json()
-    assets = release.get("assets", [])
+        assets = release.get("assets", [])
+        for asset in assets:
+            if asset.get("name") == "nightly-tag.txt":
+                tag_url = asset.get("browser_download_url")
+                if tag_url:
+                    tag = client.get(tag_url).text.strip()
+                    if tag:
+                        nightly = client.get(f"https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/{tag}")
+                        nightly.raise_for_status()
+                        assets = nightly.json().get("assets", [])
+                        break
     for asset in assets:
         name = asset.get("name", "")
         if name.startswith("llama-") and name.endswith("-bin-ubuntu-x64.tar.gz"):
             return asset["browser_download_url"]
-    raise RuntimeError("No Ubuntu x64 llama.cpp release asset was found")
+    # Known-good fallback matching llama.cpp's published Ubuntu x64 CPU asset format.
+    return "https://github.com/ggml-org/llama.cpp/releases/download/b11146/llama-b11146-bin-ubuntu-x64.tar.gz"
 
 def ensure_llama_server() -> None:
     if LLAMA_SERVER.exists():
@@ -79,8 +112,8 @@ def ensure_llama_server() -> None:
             return
         LLAMA_DIR.mkdir(parents=True, exist_ok=True)
         url = get_llama_release_url()
-        print(f"[CrazeAI] First chat request: downloading llama.cpp from {url}", flush=True)
-        download_file(url, LLAMA_ARCHIVE)
+        print(f"[CrazeAI] First chat request: downloading llama.cpp...", flush=True)
+        download_file(url, LLAMA_ARCHIVE, "llama.cpp")
         with tarfile.open(LLAMA_ARCHIVE, "r:gz") as tar:
             tar.extractall(LLAMA_DIR, filter="data")
         candidates = list(LLAMA_DIR.rglob("llama-server"))
@@ -154,13 +187,7 @@ def start_model() -> None:
 def generate(message: str) -> str:
     start_model()
     global _last_used
-    payload = {
-        "messages": [
-            {"role": "system", "content": "You are CrazeAI, a helpful coding-focused AI assistant. Give accurate, concise answers."},
-            {"role": "user", "content": message}
-        ],
-        "temperature": 0.2, "top_p": 0.9, "max_tokens": MAX_TOKENS, "stream": False
-    }
+    payload = {"messages": [{"role": "system", "content": "You are CrazeAI, a helpful coding-focused AI assistant. Give accurate, concise answers."}, {"role": "user", "content": message}], "temperature": 0.2, "top_p": 0.9, "max_tokens": MAX_TOKENS, "stream": False}
     with httpx.Client(timeout=300) as client:
         r = client.post(f"http://127.0.0.1:{LLAMA_PORT}/v1/chat/completions", json=payload)
         r.raise_for_status()
