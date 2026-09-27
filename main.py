@@ -23,7 +23,7 @@ MAX_TOKENS = int(os.getenv("MAX_TOKENS", "256"))
 N_CTX = int(os.getenv("N_CTX", "1024"))
 N_THREADS = int(os.getenv("N_THREADS", str(max(1, (os.cpu_count() or 2) - 1))))
 
-app = FastAPI(title="CrazeAI Cloud", version="2.4.0")
+app = FastAPI(title="CrazeAI Cloud", version="2.5.0")
 _process: Optional[subprocess.Popen] = None
 _process_lock = threading.Lock()
 _download_lock = threading.Lock()
@@ -58,11 +58,6 @@ def download_file(url: str, destination: Path, label: str) -> None:
                         speed = downloaded / elapsed / 1024 / 1024
                         print(f"[CrazeAI] {label}: {percent}% ({downloaded / 1024 / 1024:.1f}/{total / 1024 / 1024:.1f} MB) {speed:.1f} MB/s", flush=True)
                         last_report = percent
-                elif downloaded // (100 * 1024 * 1024) > max(last_report, -1):
-                    elapsed = max(time.monotonic() - started, 0.001)
-                    speed = downloaded / elapsed / 1024 / 1024
-                    print(f"[CrazeAI] {label}: {downloaded / 1024 / 1024:.0f} MB downloaded ({speed:.1f} MB/s)", flush=True)
-                    last_report = downloaded // (100 * 1024 * 1024)
     temp.replace(destination)
     elapsed = max(time.monotonic() - started, 0.001)
     print(f"[CrazeAI] {label}: download complete in {elapsed:.1f}s", flush=True)
@@ -78,8 +73,6 @@ def ensure_model_downloaded() -> None:
         print("[CrazeAI] GGUF ready.", flush=True)
 
 def get_llama_release_url() -> str:
-    # GitHub's current stable release may contain only a nightly pointer.
-    # Resolve that pointer, then select the Ubuntu x64 CPU archive.
     api = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
     with httpx.Client(timeout=30, follow_redirects=True) as client:
         r = client.get(api, headers={"Accept": "application/vnd.github+json", "User-Agent": "CrazeAI-Cloud"})
@@ -100,7 +93,6 @@ def get_llama_release_url() -> str:
         name = asset.get("name", "")
         if name.startswith("llama-") and name.endswith("-bin-ubuntu-x64.tar.gz"):
             return asset["browser_download_url"]
-    # Known-good fallback matching llama.cpp's published Ubuntu x64 CPU asset format.
     return "https://github.com/ggml-org/llama.cpp/releases/download/b11146/llama-b11146-bin-ubuntu-x64.tar.gz"
 
 def ensure_llama_server() -> None:
@@ -112,7 +104,7 @@ def ensure_llama_server() -> None:
             return
         LLAMA_DIR.mkdir(parents=True, exist_ok=True)
         url = get_llama_release_url()
-        print(f"[CrazeAI] First chat request: downloading llama.cpp...", flush=True)
+        print("[CrazeAI] First chat request: downloading llama.cpp...", flush=True)
         download_file(url, LLAMA_ARCHIVE, "llama.cpp")
         with tarfile.open(LLAMA_ARCHIVE, "r:gz") as tar:
             tar.extractall(LLAMA_DIR, filter="data")
@@ -166,23 +158,29 @@ def start_model() -> None:
             return
         ensure_model_downloaded()
         ensure_llama_server()
-        print("[CrazeAI] Starting llama-server and loading GGUF...", flush=True)
+        print(f"[CrazeAI] Starting llama-server: model={MODEL_PATH} ctx={N_CTX} threads={N_THREADS}", flush=True)
+        log_path = LLAMA_DIR / "llama-server.log"
+        log_file = open(log_path, "a", buffering=1)
         _process = subprocess.Popen([
             str(LLAMA_SERVER), "-m", str(MODEL_PATH),
             "--host", "127.0.0.1", "--port", str(LLAMA_PORT),
-            "-c", str(N_CTX), "-t", str(N_THREADS), "-b", "128", "--no-webui"
-        ], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+            "-c", str(N_CTX), "-t", str(N_THREADS), "-b", "64", "--no-webui"
+        ], stdout=log_file, stderr=subprocess.STDOUT, text=True)
         _last_used = time.monotonic()
-    deadline = time.monotonic() + 180
+    deadline = time.monotonic() + 300
     while time.monotonic() < deadline:
         if _process is not None and _process.poll() is not None:
-            raise RuntimeError("llama-server exited while loading the model")
+            try:
+                details = log_path.read_text(errors="replace")[-6000:]
+            except Exception:
+                details = "(unable to read llama-server.log)"
+            raise RuntimeError("llama-server exited while loading the model. Last llama-server log:\n" + details)
         if server_ready():
             _last_used = time.monotonic()
             schedule_unload()
             return
         time.sleep(1)
-    raise RuntimeError("Timed out while loading the GGUF model")
+    raise RuntimeError("Timed out while loading the GGUF model. Check llama-server.log in the Render filesystem.")
 
 def generate(message: str) -> str:
     start_model()
