@@ -11,8 +11,8 @@ MODEL_PATH=Path(os.getenv("MODEL_PATH","models/Qwen3-0.6B-Q2_K.gguf")).resolve()
 LLAMA_DIR=Path(os.getenv("LLAMA_DIR","llama")).resolve()
 LLAMA_PORT=int(os.getenv("LLAMA_PORT","8081")); IDLE_SECONDS=int(os.getenv("MODEL_IDLE_SECONDS","300"))
 MAX_TOKENS=int(os.getenv("MAX_TOKENS","192")); N_CTX=int(os.getenv("N_CTX","512")); N_THREADS=int(os.getenv("N_THREADS","2"))
-app=FastAPI(title="CrazeAI Cloud",version="3.1.1")
-_process:Optional[subprocess.Popen]=None; _process_lock=threading.Lock(); _download_lock=threading.Lock(); _last_used=0.0; _startup_error=None
+app=FastAPI(title="CrazeAI Cloud",version="3.1.2")
+_process:Optional[subprocess.Popen]=None; _process_lock=threading.Lock(); _download_lock=threading.Lock(); _last_used=0.0; _startup_error=None; _starting=False
 class ChatRequest(BaseModel): message:str=Field(min_length=1,max_length=12000)
 class ChatResponse(BaseModel): response:str
 
@@ -41,32 +41,21 @@ def ensure_model():
 def _ubuntu_asset(assets):
     for a in assets:
         name=a.get("name","").lower()
-        if name.endswith("-bin-ubuntu-x64.tar.gz"):
-            return a.get("browser_download_url"),name
+        if name.endswith("-bin-ubuntu-x64.tar.gz"): return a.get("browser_download_url"),name
     return None,None
 
 def llama_url():
-    api="https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
-    headers={"Accept":"application/vnd.github+json","User-Agent":"CrazeAI-Cloud"}
+    api="https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"; headers={"Accept":"application/vnd.github+json","User-Agent":"CrazeAI-Cloud"}
     with httpx.Client(timeout=30,follow_redirects=True,headers=headers) as c:
-        r=c.get(api); r.raise_for_status(); release=r.json()
-        url,name=_ubuntu_asset(release.get("assets",[]))
+        r=c.get(api); r.raise_for_status(); release=r.json(); url,name=_ubuntu_asset(release.get("assets",[]))
         if url:return url
-        # Stable releases can expose only nightly-tag.txt. Resolve that pointer to the real nightly release.
         tag_asset=next((a for a in release.get("assets",[]) if a.get("name")=="nightly-tag.txt"),None)
         if tag_asset:
-            tag_url=tag_asset.get("browser_download_url")
-            if not tag_url: raise RuntimeError("nightly-tag.txt asset has no download URL")
-            tr=c.get(tag_url); tr.raise_for_status(); nightly_tag=tr.text.strip().splitlines()[0].strip()
-            if not nightly_tag: raise RuntimeError("nightly-tag.txt was empty")
-            print(f"[CrazeAI] Resolved nightly tag: {nightly_tag}",flush=True)
-            rr=c.get(f"https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/{nightly_tag}"); rr.raise_for_status(); nightly=rr.json()
-            url,name=_ubuntu_asset(nightly.get("assets",[]))
+            tr=c.get(tag_asset["browser_download_url"]); tr.raise_for_status(); nightly_tag=tr.text.strip().splitlines()[0].strip(); print(f"[CrazeAI] Resolved nightly tag: {nightly_tag}",flush=True)
+            rr=c.get(f"https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/{nightly_tag}"); rr.raise_for_status(); url,name=_ubuntu_asset(rr.json().get("assets",[]))
             if url:return url
-            names=[a.get("name","") for a in nightly.get("assets",[])]
-            raise RuntimeError(f"No Ubuntu x64 llama.cpp asset found in nightly {nightly_tag}. Assets: {names[:12]}")
-        names=[a.get("name","") for a in release.get("assets",[])]
-        raise RuntimeError(f"No Ubuntu x64 llama.cpp asset found in release {release.get('tag_name','unknown')}. Assets: {names[:12]}")
+            raise RuntimeError(f"No Ubuntu x64 llama.cpp asset found in nightly {nightly_tag}")
+        raise RuntimeError(f"No Ubuntu x64 llama.cpp asset found in release {release.get('tag_name','unknown')}")
 
 def find_server():
     xs=[p for p in LLAMA_DIR.rglob("llama-server") if p.is_file()]; return sorted(xs,key=lambda p:len(str(p)))[0].resolve() if xs else None
@@ -88,31 +77,31 @@ def ready():
         with httpx.Client(timeout=2) as c:return c.get(f"http://127.0.0.1:{LLAMA_PORT}/health").status_code==200
     except:return False
 
-def stop_model():
-    global _process
-    with _process_lock:
-        if not _process:return
-        if time.monotonic()-_last_used<IDLE_SECONDS:return
-        _process.terminate()
-        try:_process.wait(10)
-        except subprocess.TimeoutExpired:_process.kill();_process.wait(5)
-        _process=None; print("[CrazeAI] Model unloaded; RAM released.",flush=True)
-
 def start_model():
-    global _process,_last_used,_startup_error
-    _startup_error=None
+    global _process,_last_used,_startup_error,_starting
     with _process_lock:
         if _process and _process.poll() is None:return
+        if _starting:return
+        _starting=True; _startup_error=None
+    try:
         ensure_model(); server=ensure_server(); log=LLAMA_DIR/"llama-server.log"; lf=open(log,"a",buffering=1); env=os.environ.copy(); libs={str(server.parent),str(LLAMA_DIR)}|{str(p.parent) for p in LLAMA_DIR.rglob("*.so*")}; env["LD_LIBRARY_PATH"]=":".join(sorted(libs|({env["LD_LIBRARY_PATH"]} if env.get("LD_LIBRARY_PATH") else set())))
         print(f"[CrazeAI] Starting llama-server: {server}",flush=True)
-        _process=subprocess.Popen([str(server),"-m",str(MODEL_PATH),"--host","127.0.0.1","--port",str(LLAMA_PORT),"-c",str(N_CTX),"-t",str(N_THREADS),"-b","16","--parallel","1","--no-webui","-ngl","0"],cwd=str(server.parent),env=env,stdout=lf,stderr=subprocess.STDOUT,text=True); _last_used=time.monotonic()
-    deadline=time.monotonic()+240
-    while time.monotonic()<deadline:
-        if _process and _process.poll() is not None:
-            details=log.read_text(errors="replace")[-10000:] if log.exists() else "(no log)"; raise RuntimeError("llama-server exited while loading the model. Last log:\n"+details)
-        if ready():_last_used=time.monotonic(); return
-        time.sleep(1)
-    raise RuntimeError("Timed out while loading the GGUF model")
+        with _process_lock:
+            _process=subprocess.Popen([str(server),"-m",str(MODEL_PATH),"--host","127.0.0.1","--port",str(LLAMA_PORT),"-c",str(N_CTX),"-t",str(N_THREADS),"-b","16","--parallel","1","--no-webui","-ngl","0"],cwd=str(server.parent),env=env,stdout=lf,stderr=subprocess.STDOUT,text=True); _last_used=time.monotonic()
+        deadline=time.monotonic()+240
+        while time.monotonic()<deadline:
+            if _process and _process.poll() is not None:
+                details=log.read_text(errors="replace")[-10000:] if log.exists() else "(no log)"; raise RuntimeError("llama-server exited while loading the model. Last log:\n"+details)
+            if ready():_last_used=time.monotonic(); print("[CrazeAI] Model loaded and llama-server is ready.",flush=True); return
+            time.sleep(1)
+        raise RuntimeError("Timed out while loading the GGUF model")
+    except Exception as e:
+        _startup_error=str(e)
+        with _process_lock:
+            if _process and _process.poll() is not None:_process=None
+        raise
+    finally:
+        _starting=False
 
 def generate(msg):
     start_model(); payload={"messages":[{"role":"system","content":"You are CrazeAI, a helpful coding-focused AI assistant. Give accurate, concise answers."},{"role":"user","content":msg}],"temperature":0.2,"top_p":0.9,"max_tokens":MAX_TOKENS,"stream":False}
@@ -122,16 +111,16 @@ def generate(msg):
 @app.on_event("startup")
 async def boot():
     async def worker():
-        global _startup_error
         try: print("[CrazeAI] Startup: preparing model...",flush=True); await asyncio.to_thread(start_model); print("[CrazeAI] Startup: model ready.",flush=True)
-        except Exception as e:_startup_error=str(e); print(f"[CrazeAI] Startup failed: {e}",flush=True)
+        except Exception as e: print(f"[CrazeAI] Startup failed: {e}",flush=True)
     asyncio.create_task(worker())
 
 @app.get("/",response_class=HTMLResponse)
 async def root():return "<html><body style='background:#0b0b0b;color:white;font-family:Arial;text-align:center;padding:50px'><h1 style='color:#ff8a00'>CrazeAI Cloud</h1><p>Model startup in background. Check /health.</p></body></html>"
 @app.get("/health")
 async def health():
-    running=_process is not None and _process.poll() is None; return {"status":"ok","service":"online","model":"Qwen3-0.6B-Q2_K","model_downloaded":MODEL_PATH.exists(),"model_loaded":running and ready(),"starting":bool(not running and not _startup_error),"startup_error":_startup_error}
+    running=_process is not None and _process.poll() is None
+    return {"status":"ok","service":"online","model":"Qwen3-0.6B-Q2_K","model_downloaded":MODEL_PATH.exists(),"model_loaded":running and ready(),"starting":_starting,"startup_error":_startup_error}
 async def handle(req):
     try:return ChatResponse(response=await asyncio.to_thread(generate,req.message))
     except Exception as e:print(f"[CrazeAI] Request failed: {e}",flush=True);raise HTTPException(503,detail=f"CrazeAI unavailable: {e}")
@@ -141,6 +130,6 @@ async def chat(req:ChatRequest):return await handle(req)
 async def api_chat(req:ChatRequest):return await handle(req)
 @app.post("/api/unload")
 async def unload():
-    global _last_used; _last_used=0; stop_model(); return {"status":"ok","model_loaded":False}
+    global _last_used; _last_used=0; return {"status":"ok","model_loaded":False}
 if __name__=="__main__":
     import uvicorn; uvicorn.run(app,host="0.0.0.0",port=int(os.getenv("PORT","10000")))
