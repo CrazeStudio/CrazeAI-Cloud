@@ -9,6 +9,7 @@ from typing import Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 MODEL_URL = os.getenv("MODEL_URL", "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q8_0.gguf?download=true")
@@ -22,7 +23,7 @@ MAX_TOKENS = int(os.getenv("MAX_TOKENS", "256"))
 N_CTX = int(os.getenv("N_CTX", "1024"))
 N_THREADS = int(os.getenv("N_THREADS", str(max(1, (os.cpu_count() or 2) - 1))))
 
-app = FastAPI(title="CrazeAI Cloud", version="2.2.0")
+app = FastAPI(title="CrazeAI Cloud", version="2.3.0")
 _process: Optional[subprocess.Popen] = None
 _process_lock = threading.Lock()
 _download_lock = threading.Lock()
@@ -52,7 +53,7 @@ def ensure_model_downloaded() -> None:
     with _download_lock:
         if MODEL_PATH.exists() and MODEL_PATH.stat().st_size > 0:
             return
-        print("[CrazeAI] First request: downloading GGUF...", flush=True)
+        print("[CrazeAI] First chat request: downloading GGUF...", flush=True)
         download_file(MODEL_URL, MODEL_PATH)
         print("[CrazeAI] GGUF ready.", flush=True)
 
@@ -64,14 +65,15 @@ def ensure_llama_server() -> None:
         if LLAMA_SERVER.exists():
             return
         LLAMA_DIR.mkdir(parents=True, exist_ok=True)
+        # Pinned prebuilt Ubuntu x64 llama.cpp release. It is downloaded only on first /api/chat.
         url = "https://github.com/ggml-org/llama.cpp/releases/download/b5814/llama-b5814-bin-ubuntu-x64.tar.gz"
-        print("[CrazeAI] First request: downloading llama-server...", flush=True)
+        print("[CrazeAI] First chat request: downloading llama-server...", flush=True)
         download_file(url, LLAMA_ARCHIVE)
         with tarfile.open(LLAMA_ARCHIVE, "r:gz") as tar:
             tar.extractall(LLAMA_DIR, filter="data")
         candidates = list(LLAMA_DIR.rglob("llama-server"))
         if not candidates:
-            raise RuntimeError("llama-server binary not found in release archive")
+            raise RuntimeError("llama-server binary was not found in the release archive")
         candidates[0].chmod(0o755)
         if candidates[0] != LLAMA_SERVER:
             candidates[0].replace(LLAMA_SERVER)
@@ -147,34 +149,37 @@ def generate(message: str) -> str:
         ],
         "temperature": 0.2, "top_p": 0.9, "max_tokens": MAX_TOKENS, "stream": False
     }
-    try:
-        with httpx.Client(timeout=180) as client:
-            r = client.post(f"http://127.0.0.1:{LLAMA_PORT}/v1/chat/completions", json=payload)
-            r.raise_for_status()
-            data = r.json()
-        _last_used = time.monotonic()
-        schedule_unload()
-        return data["choices"][0]["message"]["content"].strip()
-    except Exception:
-        schedule_unload()
-        raise
+    with httpx.Client(timeout=300) as client:
+        r = client.post(f"http://127.0.0.1:{LLAMA_PORT}/v1/chat/completions", json=payload)
+        r.raise_for_status()
+        data = r.json()
+    _last_used = time.monotonic()
+    schedule_unload()
+    return data["choices"][0]["message"]["content"].strip()
 
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 async def root():
-    return {"name": "CrazeAI Cloud", "status": "online", "lazy_loading": True}
+    return """<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'><title>CrazeAI Cloud</title><style>body{font-family:Arial,sans-serif;background:#0b0b0b;color:#fff;display:grid;place-items:center;min-height:100vh;margin:0}main{max-width:620px;padding:32px;text-align:center}h1{color:#ff8a00}code{background:#171717;padding:4px 7px;border-radius:6px}</style></head><body><main><h1>CrazeAI Cloud</h1><p>API is online.</p><p>Model uses lazy loading and is only downloaded/loaded when <code>/api/chat</code> is called.</p><p><a href='/health' style='color:#ff8a00'>Health status</a></p></main></body></html>"""
 
 @app.get("/health")
 async def health():
     running = _process is not None and _process.poll() is None
-    return {"status": "ok", "model_downloaded": MODEL_PATH.exists(), "model_loaded": running and server_ready(), "lazy_loading": True, "idle_seconds": IDLE_SECONDS}
+    return {"status": "ok", "service": "online", "model_downloaded": MODEL_PATH.exists(), "model_loaded": running and server_ready(), "lazy_loading": True, "idle_seconds": IDLE_SECONDS}
 
-@app.post("/api/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest):
+async def handle_chat(req: ChatRequest):
     try:
         return ChatResponse(response=await asyncio.to_thread(generate, req.message))
     except Exception as exc:
         print(f"[CrazeAI] Request failed: {exc}", flush=True)
         raise HTTPException(status_code=503, detail=f"CrazeAI unavailable: {exc}") from exc
+
+@app.post("/api/chat", response_model=ChatResponse)
+async def chat(req: ChatRequest):
+    return await handle_chat(req)
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat_alias(req: ChatRequest):
+    return await handle_chat(req)
 
 @app.post("/api/unload")
 async def unload():
@@ -185,4 +190,4 @@ async def unload():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "10000")))
