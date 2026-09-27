@@ -11,7 +11,7 @@ MODEL_PATH=Path(os.getenv("MODEL_PATH","models/Qwen3-0.6B-Q2_K.gguf")).resolve()
 LLAMA_DIR=Path(os.getenv("LLAMA_DIR","llama")).resolve()
 LLAMA_PORT=int(os.getenv("LLAMA_PORT","8081")); IDLE_SECONDS=int(os.getenv("MODEL_IDLE_SECONDS","300"))
 MAX_TOKENS=int(os.getenv("MAX_TOKENS","192")); N_CTX=int(os.getenv("N_CTX","512")); N_THREADS=int(os.getenv("N_THREADS","2"))
-app=FastAPI(title="CrazeAI Cloud",version="3.1.2")
+app=FastAPI(title="CrazeAI Cloud",version="3.1.3")
 _process:Optional[subprocess.Popen]=None; _process_lock=threading.Lock(); _download_lock=threading.Lock(); _last_used=0.0; _startup_error=None; _starting=False
 class ChatRequest(BaseModel): message:str=Field(min_length=1,max_length=12000)
 class ChatResponse(BaseModel): response:str
@@ -87,7 +87,7 @@ def start_model():
         ensure_model(); server=ensure_server(); log=LLAMA_DIR/"llama-server.log"; lf=open(log,"a",buffering=1); env=os.environ.copy(); libs={str(server.parent),str(LLAMA_DIR)}|{str(p.parent) for p in LLAMA_DIR.rglob("*.so*")}; env["LD_LIBRARY_PATH"]=":".join(sorted(libs|({env["LD_LIBRARY_PATH"]} if env.get("LD_LIBRARY_PATH") else set())))
         print(f"[CrazeAI] Starting llama-server: {server}",flush=True)
         with _process_lock:
-            _process=subprocess.Popen([str(server),"-m",str(MODEL_PATH),"--host","127.0.0.1","--port",str(LLAMA_PORT),"-c",str(N_CTX),"-t",str(N_THREADS),"-b","16","--parallel","1","--no-webui","-ngl","0"],cwd=str(server.parent),env=env,stdout=lf,stderr=subprocess.STDOUT,text=True); _last_used=time.monotonic()
+            _process=subprocess.Popen([str(server),"-m",str(MODEL_PATH),"--host","127.0.0.1","--port",str(LLAMA_PORT),"-c",str(N_CTX),"-t",str(N_THREADS),"-b","16","--parallel","1","--no-webui","--jinja","--reasoning","off","-ngl","0"],cwd=str(server.parent),env=env,stdout=lf,stderr=subprocess.STDOUT,text=True); _last_used=time.monotonic()
         deadline=time.monotonic()+240
         while time.monotonic()<deadline:
             if _process and _process.poll() is not None:
@@ -104,9 +104,26 @@ def start_model():
         _starting=False
 
 def generate(msg):
-    start_model(); payload={"messages":[{"role":"system","content":"You are CrazeAI, a helpful coding-focused AI assistant. Give accurate, concise answers."},{"role":"user","content":msg}],"temperature":0.2,"top_p":0.9,"max_tokens":MAX_TOKENS,"stream":False}
-    with httpx.Client(timeout=300) as c:r=c.post(f"http://127.0.0.1:{LLAMA_PORT}/v1/chat/completions",json=payload); r.raise_for_status(); data=r.json()
-    global _last_used; _last_used=time.monotonic(); return data["choices"][0]["message"]["content"].strip()
+    start_model()
+    payload={"messages":[{"role":"system","content":"You are CrazeAI, a helpful coding-focused AI assistant. Answer directly and naturally. Do not output token IDs, token numbers, debug fields, or repeated characters."},{"role":"user","content":msg}],"temperature":0.2,"top_p":0.9,"max_tokens":MAX_TOKENS,"stream":False}
+    with httpx.Client(timeout=300) as c:
+        r=c.post(f"http://127.0.0.1:{LLAMA_PORT}/v1/chat/completions",json=payload)
+        r.raise_for_status()
+        data=r.json()
+    global _last_used
+    _last_used=time.monotonic()
+    choices=data.get("choices") if isinstance(data,dict) else None
+    if not choices or not isinstance(choices,list):
+        raise RuntimeError("llama-server returned no choices")
+    message=choices[0].get("message") if isinstance(choices[0],dict) else None
+    if not isinstance(message,dict):
+        raise RuntimeError("llama-server returned an invalid message")
+    answer=message.get("content")
+    if not isinstance(answer,str) or not answer.strip():
+        answer=message.get("reasoning_content")
+    if not isinstance(answer,str) or not answer.strip():
+        raise RuntimeError("llama-server returned empty content")
+    return answer.strip()
 
 @app.on_event("startup")
 async def boot():
