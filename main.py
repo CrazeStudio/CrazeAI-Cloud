@@ -11,7 +11,7 @@ MODEL_PATH=Path(os.getenv("MODEL_PATH","models/Qwen3-0.6B-Q2_K.gguf")).resolve()
 LLAMA_DIR=Path(os.getenv("LLAMA_DIR","llama")).resolve()
 LLAMA_PORT=int(os.getenv("LLAMA_PORT","8081")); IDLE_SECONDS=int(os.getenv("MODEL_IDLE_SECONDS","300"))
 MAX_TOKENS=int(os.getenv("MAX_TOKENS","192")); N_CTX=int(os.getenv("N_CTX","512")); N_THREADS=int(os.getenv("N_THREADS","2"))
-app=FastAPI(title="CrazeAI Cloud",version="3.1.0")
+app=FastAPI(title="CrazeAI Cloud",version="3.1.1")
 _process:Optional[subprocess.Popen]=None; _process_lock=threading.Lock(); _download_lock=threading.Lock(); _last_used=0.0; _startup_error=None
 class ChatRequest(BaseModel): message:str=Field(min_length=1,max_length=12000)
 class ChatResponse(BaseModel): response:str
@@ -38,16 +38,35 @@ def ensure_model():
         if MODEL_PATH.is_file() and MODEL_PATH.stat().st_size>200_000_000:return
         print("[CrazeAI] Downloading GGUF to disk (streaming, low RAM)...",flush=True); download_file(MODEL_URL,MODEL_PATH,"GGUF")
 
+def _ubuntu_asset(assets):
+    for a in assets:
+        name=a.get("name","").lower()
+        if name.endswith("-bin-ubuntu-x64.tar.gz"):
+            return a.get("browser_download_url"),name
+    return None,None
+
 def llama_url():
     api="https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
-    with httpx.Client(timeout=30,follow_redirects=True,headers={"Accept":"application/vnd.github+json","User-Agent":"CrazeAI-Cloud"}) as c:
-        r=c.get(api); r.raise_for_status(); release=r.json(); assets=release.get("assets",[])
-    # Current llama.cpp release workflow uses this exact Ubuntu x64 CPU asset pattern.
-    preferred=[a for a in assets if a.get("name","").lower().endswith("-bin-ubuntu-x64.tar.gz")]
-    if not preferred:
-        names=[a.get("name","") for a in assets]
+    headers={"Accept":"application/vnd.github+json","User-Agent":"CrazeAI-Cloud"}
+    with httpx.Client(timeout=30,follow_redirects=True,headers=headers) as c:
+        r=c.get(api); r.raise_for_status(); release=r.json()
+        url,name=_ubuntu_asset(release.get("assets",[]))
+        if url:return url
+        # Stable releases can expose only nightly-tag.txt. Resolve that pointer to the real nightly release.
+        tag_asset=next((a for a in release.get("assets",[]) if a.get("name")=="nightly-tag.txt"),None)
+        if tag_asset:
+            tag_url=tag_asset.get("browser_download_url")
+            if not tag_url: raise RuntimeError("nightly-tag.txt asset has no download URL")
+            tr=c.get(tag_url); tr.raise_for_status(); nightly_tag=tr.text.strip().splitlines()[0].strip()
+            if not nightly_tag: raise RuntimeError("nightly-tag.txt was empty")
+            print(f"[CrazeAI] Resolved nightly tag: {nightly_tag}",flush=True)
+            rr=c.get(f"https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/{nightly_tag}"); rr.raise_for_status(); nightly=rr.json()
+            url,name=_ubuntu_asset(nightly.get("assets",[]))
+            if url:return url
+            names=[a.get("name","") for a in nightly.get("assets",[])]
+            raise RuntimeError(f"No Ubuntu x64 llama.cpp asset found in nightly {nightly_tag}. Assets: {names[:12]}")
+        names=[a.get("name","") for a in release.get("assets",[])]
         raise RuntimeError(f"No Ubuntu x64 llama.cpp asset found in release {release.get('tag_name','unknown')}. Assets: {names[:12]}")
-    return preferred[0]["browser_download_url"]
 
 def find_server():
     xs=[p for p in LLAMA_DIR.rglob("llama-server") if p.is_file()]; return sorted(xs,key=lambda p:len(str(p)))[0].resolve() if xs else None
