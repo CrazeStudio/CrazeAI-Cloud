@@ -2,6 +2,9 @@ name: Export Mobile GGUF Model
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/export-gguf.yml"
 
 permissions:
   contents: read
