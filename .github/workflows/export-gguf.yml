@@ -1,0 +1,60 @@
+name: Export Mobile GGUF Model
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: export-mobile-gguf
+  cancel-in-progress: false
+
+jobs:
+  export-model:
+    name: Download and export Qwen3 1.7B Q4_K_M
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Prepare output directory
+        run: mkdir -p exported-model
+
+      - name: Download phone-optimized GGUF
+        env:
+          MODEL_URL: https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf?download=true
+        run: |
+          set -euo pipefail
+          curl --location --fail --show-error \
+            --retry 5 --retry-all-errors --retry-delay 3 \
+            --connect-timeout 30 \
+            "$MODEL_URL" \
+            --output exported-model/Qwen3-1.7B-Q4_K_M.gguf
+
+      - name: Validate GGUF file
+        run: |
+          set -euo pipefail
+          MODEL="exported-model/Qwen3-1.7B-Q4_K_M.gguf"
+          test -s "$MODEL"
+          MAGIC="$(head -c 4 "$MODEL")"
+          if [ "$MAGIC" != "GGUF" ]; then
+            echo "::error::Downloaded file does not have the GGUF magic header."
+            file "$MODEL" || true
+            exit 1
+          fi
+          SIZE="$(stat -c '%s' "$MODEL")"
+          SHA="$(sha256sum "$MODEL" | cut -d ' ' -f 1)"
+          echo "Model file: $MODEL" >> "$GITHUB_STEP_SUMMARY"
+          echo "Size: $SIZE bytes" >> "$GITHUB_STEP_SUMMARY"
+          echo "SHA-256: `$SHA`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Model: Qwen3 1.7B, Q4_K_M quantization" >> "$GITHUB_STEP_SUMMARY"
+          echo "Source: ggml-org/Qwen3-1.7B-GGUF on Hugging Face" >> "$GITHUB_STEP_SUMMARY"
+          ls -lh "$MODEL"
+
+      - name: Export GGUF as downloadable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CrazeAI-Qwen3-1.7B-Q4_K_M-GGUF
+          path: exported-model/Qwen3-1.7B-Q4_K_M.gguf
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
