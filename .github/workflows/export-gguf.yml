@@ -1,4 +1,4 @@
-name: Export Mobile GGUF Model
+name: Export Android-Friendly Coding GGUF
 
 on:
   workflow_dispatch:
@@ -10,33 +10,33 @@ permissions:
   contents: read
 
 concurrency:
-  group: export-mobile-gguf
+  group: export-android-coding-gguf
   cancel-in-progress: false
 
 jobs:
   export-model:
-    name: Download and export Qwen3 1.7B Q4_K_M
+    name: Download and package Qwen2.5-Coder 1.5B Q4_K_M
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - name: Prepare output directory
         run: mkdir -p exported-model
 
-      - name: Download phone-optimized GGUF
+      - name: Download Android-friendly coding model
         env:
-          MODEL_URL: https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf?download=true
+          MODEL_URL: https://huggingface.co/ggml-org/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf?download=true
         run: |
           set -euo pipefail
           curl --location --fail --show-error \
             --retry 5 --retry-all-errors --retry-delay 3 \
             --connect-timeout 30 \
             "$MODEL_URL" \
-            --output exported-model/Qwen3-1.7B-Q4_K_M.gguf
+            --output exported-model/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf
 
-      - name: Validate GGUF file
+      - name: Validate GGUF file and record metadata
         run: |
           set -euo pipefail
-          MODEL="exported-model/Qwen3-1.7B-Q4_K_M.gguf"
+          MODEL="exported-model/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf"
           test -s "$MODEL"
           MAGIC="$(head -c 4 "$MODEL")"
           if [ "$MAGIC" != "GGUF" ]; then
@@ -44,20 +44,23 @@ jobs:
             file "$MODEL" || true
             exit 1
           fi
+
           SIZE="$(stat -c '%s' "$MODEL")"
           SHA="$(sha256sum "$MODEL" | cut -d ' ' -f 1)"
-          echo "Model file: $MODEL" >> "$GITHUB_STEP_SUMMARY"
+          echo "Model: Qwen2.5-Coder 1.5B Instruct" >> "$GITHUB_STEP_SUMMARY"
+          echo "Quantization: Q4_K_M" >> "$GITHUB_STEP_SUMMARY"
+          echo "Target: Android phones running llama.cpp-compatible apps" >> "$GITHUB_STEP_SUMMARY"
+          echo "File: $MODEL" >> "$GITHUB_STEP_SUMMARY"
           echo "Size: $SIZE bytes" >> "$GITHUB_STEP_SUMMARY"
           echo "SHA-256: `$SHA`" >> "$GITHUB_STEP_SUMMARY"
-          echo "Model: Qwen3 1.7B, Q4_K_M quantization" >> "$GITHUB_STEP_SUMMARY"
-          echo "Source: ggml-org/Qwen3-1.7B-GGUF on Hugging Face" >> "$GITHUB_STEP_SUMMARY"
+          echo "Source: ggml-org/Qwen2.5-Coder-1.5B-Instruct-GGUF on Hugging Face" >> "$GITHUB_STEP_SUMMARY"
           ls -lh "$MODEL"
 
-      - name: Export GGUF as downloadable artifact
+      - name: Upload downloadable GGUF artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CrazeAI-Qwen3-1.7B-Q4_K_M-GGUF
-          path: exported-model/Qwen3-1.7B-Q4_K_M.gguf
+          name: CrazeAI-Qwen2.5-Coder-1.5B-Q4_K_M-Android
+          path: exported-model/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
