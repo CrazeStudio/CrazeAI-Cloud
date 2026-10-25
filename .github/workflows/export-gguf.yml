@@ -24,19 +24,19 @@ jobs:
 
       - name: Download Android-friendly coding model
         env:
-          MODEL_URL: https://huggingface.co/ggml-org/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf?download=true
+          MODEL_URL: https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf?download=true
         run: |
           set -euo pipefail
           curl --location --fail --show-error \
             --retry 5 --retry-all-errors --retry-delay 3 \
             --connect-timeout 30 \
             "$MODEL_URL" \
-            --output exported-model/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf
+            --output exported-model/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf
 
       - name: Validate GGUF file and record metadata
         run: |
           set -euo pipefail
-          MODEL="exported-model/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf"
+          MODEL="exported-model/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"
           test -s "$MODEL"
           MAGIC="$(head -c 4 "$MODEL")"
           if [ "$MAGIC" != "GGUF" ]; then
@@ -53,14 +53,14 @@ jobs:
           echo "File: $MODEL" >> "$GITHUB_STEP_SUMMARY"
           echo "Size: $SIZE bytes" >> "$GITHUB_STEP_SUMMARY"
           echo "SHA-256: `$SHA`" >> "$GITHUB_STEP_SUMMARY"
-          echo "Source: ggml-org/Qwen2.5-Coder-1.5B-Instruct-GGUF on Hugging Face" >> "$GITHUB_STEP_SUMMARY"
+          echo "Source: Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF on Hugging Face" >> "$GITHUB_STEP_SUMMARY"
           ls -lh "$MODEL"
 
       - name: Upload downloadable GGUF artifact
         uses: actions/upload-artifact@v4
         with:
           name: CrazeAI-Qwen2.5-Coder-1.5B-Q4_K_M-Android
-          path: exported-model/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf
+          path: exported-model/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
