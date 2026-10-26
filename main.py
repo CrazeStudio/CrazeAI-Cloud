@@ -3,7 +3,10 @@ from pathlib import Path
 from typing import Optional
 import httpx
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
+from fastapi import UploadFile, File
+import cv2
+import numpy as np
 from pydantic import BaseModel, Field
 
 MODEL_URL=os.getenv("MODEL_URL","https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct-GGUF/resolve/main/smollm2-360m-instruct-q8_0.gguf?download=true")
@@ -145,6 +148,45 @@ async def handle(req):
 async def chat(req:ChatRequest):return await handle(req)
 @app.post("/api/chat",response_model=ChatResponse)
 async def api_chat(req:ChatRequest):return await handle(req)
+
+@app.post("/enhance-document")
+@app.post("/api/enhance-document")
+async def enhance_document(file: UploadFile = File(...), mode: str = "clean"):
+    """Restore a user-provided scan without generating or changing document content."""
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(415, detail="Upload an image file (PNG, JPEG, or WebP).")
+    raw = await file.read()
+    if not raw or len(raw) > 12 * 1024 * 1024:
+        raise HTTPException(413, detail="Image must be non-empty and no larger than 12 MB.")
+    arr = np.frombuffer(raw, dtype=np.uint8)
+    image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if image is None:
+        raise HTTPException(400, detail="The uploaded image could not be decoded.")
+    h, w = image.shape[:2]
+    if h * w > 20_000_000:
+        raise HTTPException(413, detail="Image dimensions are too large (maximum 20 megapixels).")
+    # Conservative, non-generative cleanup: denoise, improve local contrast, and upscale.
+    # Never synthesize text, numbers, signatures, stamps, or account details.
+    denoised = cv2.fastNlMeansDenoisingColored(image, None, 3, 3, 7, 21)
+    if mode == "grayscale":
+        gray = cv2.cvtColor(denoised, cv2.COLOR_BGR2GRAY)
+        clahe = cv2.createCLAHE(clipLimit=1.8, tileGridSize=(8, 8))
+        enhanced = clahe.apply(gray)
+        result = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
+    else:
+        lab = cv2.cvtColor(denoised, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        l = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8)).apply(l)
+        result = cv2.cvtColor(cv2.merge((l, a, b)), cv2.COLOR_LAB2BGR)
+    if max(h, w) < 3000:
+        result = cv2.resize(result, None, fx=1.5, fy=1.5, interpolation=cv2.INTER_CUBIC)
+    ok, encoded = cv2.imencode(".png", result, [cv2.IMWRITE_PNG_COMPRESSION, 3])
+    if not ok:
+        raise HTTPException(500, detail="Could not encode the enhanced image.")
+    return Response(content=encoded.tobytes(), media_type="image/png",
+                    headers={"Content-Disposition": 'inline; filename="enhanced-document.png"',
+                             "X-Enhancement-Method": "non-generative-restoration"})
+
 @app.post("/api/unload")
 async def unload():
     global _last_used; _last_used=0; return {"status":"ok","model_loaded":False}
