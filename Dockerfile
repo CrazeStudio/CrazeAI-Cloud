@@ -14,8 +14,7 @@ ENV LLAMA_ARG_HOST=0.0.0.0 \
     LLAMA_ARG_CACHE_TYPE_K=q8_0 \
     LLAMA_ARG_CACHE_TYPE_V=q8_0 \
     LLAMA_ARG_UI=false \
-    LLAMA_ARG_ALIAS=HuggingFaceTB/SmolLM2-135M-Instruct \
-    LLAMA_ARG_MODEL_URL=https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q3_K_M.gguf
+    LLAMA_ARG_ALIAS=HuggingFaceTB/SmolLM2-135M-Instruct
 
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/crazeai-entrypoint"]
