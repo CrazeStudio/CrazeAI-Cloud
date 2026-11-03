@@ -148,7 +148,8 @@ public final class Application {
         List<Message> messages = new ArrayList<>();
         for (Object item : rawMessages) {
             if (!(item instanceof Map<?, ?> message)) throw new RequestException(400, "Each message must be an object");
-            String role = String.valueOf(message.getOrDefault("role", ""));
+            Object roleValue = message.get("role");
+            String role = roleValue == null ? "" : roleValue.toString();
             Object contentValue = message.get("content");
             if (!(contentValue instanceof String content)) throw new RequestException(400, "Message content must be a string");
             if (content.length() > 32_000) throw new RequestException(400, "A message is too long");
@@ -190,7 +191,6 @@ public final class Application {
         result.put("created", Instant.now().getEpochSecond());
         result.put("model", MODEL_ID);
         result.put("choices", List.of(choice));
-        result.put("usage", Map.of("prompt_tokens", 0, "completion_tokens", 0, "total_tokens", 0));
         sendJson(exchange, 200, result);
     }
 
@@ -210,7 +210,7 @@ public final class Application {
                     Map<String, Object> delta = Map.of("role", "assistant", "content", text);
                     Map<String, Object> data = Map.of("id", id, "object", "chat.completion.chunk",
                             "created", Instant.now().getEpochSecond(), "model", MODEL_ID,
-                            "choices", List.of(Map.of("index", 0, "delta", delta, "finish_reason", (Object) null)));
+                            "choices", List.of(Map.of("index", 0, "delta", delta)));
                     out.write(("data: " + JSON.writeValueAsString(data) + "\n\n").getBytes(StandardCharsets.UTF_8));
                     out.flush();
                 } catch (IOException e) { throw new RuntimeException(e); }
