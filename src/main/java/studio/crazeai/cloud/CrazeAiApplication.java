@@ -85,7 +85,7 @@ public final class CrazeAiApplication {
         java.io.File modelPath = downloader.huggingFaceModel();
         System.out.println("MODEL_DOWNLOAD_COMPLETE: " + modelPath.getAbsolutePath());
         MODEL_STATE.set("loading");
-        DType quantization = DType.valueOf(env("MODEL_QUANTIZATION", "Q4").toUpperCase());
+        DType quantization = DType.valueOf(env("MODEL_QUANTIZATION", "Q8").toUpperCase());
         System.out.println("Loading Jlama model; model quantization=" + quantization);
         model = ModelSupport.loadModel(modelPath, null, DType.F32, DType.I8,
             java.util.Optional.of(quantization), java.util.Optional.empty());
