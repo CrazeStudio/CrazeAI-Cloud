@@ -39,4 +39,4 @@ services:
       - key: LLAMA_ARG_REPEAT_LAST_N
         value: 128
       - key: LLAMA_ARG_ALIAS
-        value: HuggingFaceTB/SmolLM2-135M-Instruct
+        value: Qwen/Qwen2.5-0.5B-Instruct
