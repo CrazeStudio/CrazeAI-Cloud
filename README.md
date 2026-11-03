@@ -4,7 +4,7 @@ Java 21 OpenAI-compatible inference API powered by Jlama. No llama.cpp or Python
 
 ## Model format compatibility
 
-Jlama loads Hugging Face Transformers/SafeTensors model directories and supports its own Q4/Q8 quantization path. It does not directly load GGUF Q2_K files. The default model is HuggingFaceTB/SmolLM2-360M-Instruct; the service asks Jlama to quantize model weights to Q4 while loading. If the model configuration or tokenizer template is not accepted by this Jlama release, startup fails rather than silently switching engines.
+Jlama loads Hugging Face Transformers/SafeTensors model directories and supports its own Q4/Q8 quantization path. It does not directly load GGUF Q2_K files. The default model is HuggingFaceTB/SmolLM2-360M-Instruct; the service asks Jlama to quantize BF16 model weights to Q8 while loading; Q4 is not supported by Jlama's BF16 quantization path. If the model configuration or tokenizer template is not accepted by this Jlama release, startup fails rather than silently switching engines.
 
 ## API endpoints
 
@@ -40,7 +40,7 @@ Requires JDK 21 and Gradle 8. Run: export API_KEY='replace-with-a-long-random-se
 | API_KEY | required | Bearer authentication secret |
 | MODEL_ID | HuggingFaceTB/SmolLM2-360M-Instruct | Hugging Face model ID |
 | MODEL_DIR | ./models | Model download/cache directory |
-| MODEL_QUANTIZATION | Q4 | Jlama weight quantization (Q4 or Q8) |
+| MODEL_QUANTIZATION | Q8 | Jlama weight quantization (Q8 recommended for BF16 checkpoints) |
 | MAX_TOKENS | 256 | Hard cap per completion |
 | HF_TOKEN | unset | Optional Hugging Face token |
 
