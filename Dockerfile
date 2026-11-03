@@ -19,7 +19,7 @@ ENV LLAMA_ARG_HOST=0.0.0.0 \
     LLAMA_ARG_REPEAT_PENALTY=1.15 \
     LLAMA_ARG_REPEAT_LAST_N=128 \
     LLAMA_ARG_UI=false \
-    LLAMA_ARG_ALIAS=HuggingFaceTB/SmolLM2-135M-Instruct
+    LLAMA_ARG_ALIAS=Qwen/Qwen2.5-0.5B-Instruct
 
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/crazeai-entrypoint"]
