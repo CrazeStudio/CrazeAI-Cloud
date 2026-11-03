@@ -15,9 +15,9 @@ services:
       - key: LLAMA_ARG_PORT
         value: 8080
       - key: LLAMA_ARG_CTX_SIZE
-        value: 1024
+        value: 2048
       - key: LLAMA_ARG_N_PARALLEL
-        value: 1
+        value: 2
       - key: LLAMA_ARG_THREADS
         value: 1
       - key: LLAMA_ARG_BATCH
