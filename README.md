@@ -13,7 +13,7 @@ A low-memory, OpenAI-compatible inference API running **llama.cpp** in its offic
 - Batch / micro-batch: 64 / 32.
 - Model is downloaded automatically from Hugging Face at startup.
 
-The model is deliberately small to reduce RAM. It can still hallucinate or misunderstand questions; sampling controls and a system prompt improve consistency but cannot make a 135M model reliably reason like a much larger model.
+The model is deliberately small to reduce RAM. It can still hallucinate or misunderstand questions; sampling controls and a system prompt improve consistency but cannot make a small model reliably reason like a much larger model.
 
 ## API
 
@@ -32,7 +32,7 @@ Features:
 - Streams tokens as the server sends them.
 - Sends a strict CrazeAI identity and relevance prompt.
 - Uses conservative sampling settings.
-- Keeps at most the latest 10 messages in active chat history.
+- Keeps recent messages in active chat history.
 - Archives older messages locally and retrieves only keyword-relevant excerpts.
 - Retries context-overflow errors with progressively shorter history.
 - Keeps the API key out of the source file.
@@ -60,23 +60,27 @@ Local memory commands:
 - `/clear` — archive the current chat and clear active history.
 - `exit` — quit.
 
-Memory is stored in `~/.crazeai_memory.jsonl` on the device, not on Render. Old conversation excerpts are treated as unverified context, not guaranteed facts.
+Memory is stored locally on the device, not on the hosting provider.
 
 ## Render deployment
 
-Deploy this repository as a Docker Web Service using `render.yaml`. Keep the existing `API_KEY` environment variable configured in Render. The entrypoint forwards it to llama.cpp as `LLAMA_API_KEY`.
+Deploy this repository as a Docker Web Service using `render.yaml`. Keep the `API_KEY` environment variable configured in Render. The entrypoint forwards it to llama.cpp as `LLAMA_API_KEY`.
 
-The server defaults to temperature 0.2, top-p 0.85, top-k 20 and repeat penalty 1.15. The client also sends these settings explicitly. They reduce randomness and repetition but do not eliminate model hallucinations.
+## Voroa deployment
 
-The service uses Render's ephemeral filesystem, so a restart or redeploy may download the model again. Render free instances can sleep when idle. The 1,024-token context and single request slot are intentional memory-saving settings; the client manages history rather than increasing server RAM requirements.
+Voroa currently documents Docker service configuration through its dashboard, not a repository YAML manifest like `render.yaml`. Use the exact Voroa service settings, environment variables, port handling, and health check in [VOROA.md](VOROA.md).
+
+The entrypoint reads Voroa's injected `PORT` variable (Voroa Docker services currently use port `3000`). Set the health check path to `/health` and add `API_KEY` as a runtime secret in the Voroa Environment tab. Do not pass secrets as Docker build arguments.
+
+**Memory warning:** the GGUF file is approximately 355 MB before llama.cpp runtime overhead. A 512 MB instance may run out of memory; monitor the service or use a larger memory tier before relying on it.
 
 ## Configuration
 
 | Variable | Default | Purpose |
 |---|---:|---|
 | `API_KEY` | required | Bearer secret; never expose in source code |
-| `LLAMA_ARG_CTX_SIZE` | 1024 | Maximum context allocation |
-| `LLAMA_ARG_N_PARALLEL` | 1 | One active request slot |
+| `LLAMA_ARG_CTX_SIZE` | 2048 | Maximum context allocation |
+| `LLAMA_ARG_N_PARALLEL` | 2 | Concurrent request slots |
 | `LLAMA_ARG_THREADS` | 1 | CPU inference threads |
 | `LLAMA_ARG_BATCH` | 64 | Prompt batch size |
 | `LLAMA_ARG_UBATCH` | 32 | Physical micro-batch size |
@@ -86,14 +90,12 @@ The service uses Render's ephemeral filesystem, so a restart or redeploy may dow
 | `LLAMA_ARG_REPEAT_PENALTY` | 1.15 | Repetition penalty |
 | `LLAMA_ARG_REPEAT_LAST_N` | 128 | Repetition lookback window |
 
+## Faster startup
+
+The Qwen GGUF is downloaded during the Docker image build and copied into the final image. The running service loads the model from `/models`, so it does not need to download it again whenever the container restarts. This shifts the one-time model download into the image-build step; model initialization still takes time.
+
+## Concurrent requests
+
+The Docker entrypoint defaults to two llama.cpp parallel slots (`--parallel 2`) and a 2,048-token total context (`--ctx-size 2048`). This allows up to two inference requests to be processed concurrently; additional requests wait for a free slot. Each slot receives a share of the configured context. Monitor memory and reduce parallel slots to 1 if the instance restarts from out-of-memory conditions.
+
 The previous Gradle/Jlama Java source remains in the repository for reference; Docker runs llama.cpp.
-
-
-### Faster startup
-
-The Qwen GGUF is downloaded during the Docker image build and copied into the final image. The running service loads `/models/Qwen2.5-0.5B-Instruct-Q3_K_M.gguf` locally, so it does not need to download the model again whenever the free Render instance wakes or restarts. This shifts the one-time model download into the image-build step; it does not prevent Render free instances from sleeping, and model initialization still takes time.
-
-
-### Concurrent requests
-
-The server is configured with two llama.cpp parallel slots (`--parallel 2`) and a 2,048-token total context (`--ctx-size 2048`). This allows up to two inference requests to be processed concurrently; additional requests wait for a free slot. Each slot receives a share of the configured context. On the Render free instance, monitor startup logs and memory for out-of-memory restarts; if that happens, reduce parallel slots to 1.
