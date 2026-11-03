@@ -30,5 +30,3 @@ services:
         value: q8_0
       - key: LLAMA_ARG_ALIAS
         value: HuggingFaceTB/SmolLM2-135M-Instruct
-      - key: LLAMA_ARG_MODEL_URL
-        value: https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q3_K_M.gguf
