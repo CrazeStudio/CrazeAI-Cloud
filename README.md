@@ -5,8 +5,8 @@ A low-memory, OpenAI-compatible inference API running **llama.cpp** in its offic
 ## Runtime and model
 
 - Runtime: official `ghcr.io/ggml-org/llama.cpp:server` image.
-- Model: `bartowski/SmolLM2-135M-Instruct-GGUF`
-- Quantization: `Q3_K_M` (approximately 94 MB model file).
+- Model: `bartowski/Qwen2.5-0.5B-Instruct-GGUF`
+- Quantization: `Q3_K_M` (approximately 355 MB model file).
 - Context: 1,024 tokens (kept conservative for the Render free instance).
 - Parallel requests: 1.
 - CPU threads: 1.
