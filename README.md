@@ -92,3 +92,8 @@ The previous Gradle/Jlama Java source remains in the repository for reference; D
 ### Faster startup
 
 The Qwen GGUF is downloaded during the Docker image build and copied into the final image. The running service loads `/models/Qwen2.5-0.5B-Instruct-Q3_K_M.gguf` locally, so it does not need to download the model again whenever the free Render instance wakes or restarts. This shifts the one-time model download into the image-build step; it does not prevent Render free instances from sleeping, and model initialization still takes time.
+
+
+### Concurrent requests
+
+The server is configured with two llama.cpp parallel slots (`--parallel 2`) and a 2,048-token total context (`--ctx-size 2048`). This allows up to two inference requests to be processed concurrently; additional requests wait for a free slot. Each slot receives a share of the configured context. On the Render free instance, monitor startup logs and memory for out-of-memory restarts; if that happens, reduce parallel slots to 1.
