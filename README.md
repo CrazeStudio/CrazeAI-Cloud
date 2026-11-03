@@ -8,7 +8,8 @@ Jlama loads Hugging Face Transformers/SafeTensors model directories and supports
 
 ## API endpoints
 
-- GET /health — public Render health check
+- GET /health — public liveness endpoint used by Render; returns 200 while the HTTP process is running, including during model download
+- GET /ready — public readiness endpoint; returns 503 until the model is fully loaded, then 200
 - GET /v1/models — authenticated model list
 - POST /v1/chat/completions — OpenAI-compatible chat completion, including stream=true SSE
 
@@ -22,7 +23,8 @@ Example request body:
 
 1. Create a Blueprint in Render from this repository and apply render.yaml.
 2. Set API_KEY to a long random secret in Render environment variables. The service refuses to start without it.
-3. The model downloads on first boot into MODEL_DIR. HF_TOKEN is optional for gated/private models.
+3. The HTTP server starts immediately, then the model downloads and loads in a background thread into MODEL_DIR. Watch Render logs for MODEL_DOWNLOAD_STARTED, MODEL_DOWNLOAD_COMPLETE, MODEL_READY, or MODEL_INITIALIZATION_FAILED. HF_TOKEN is optional for gated/private models.
+4. Chat and model-list endpoints return HTTP 503 until Jlama finishes loading. Check /ready to confirm inference readiness.
 
 Render free filesystems are ephemeral, so restarts/redeploys may download the model again. Free instances also have tight memory limits: loading and quantizing a 360M BF16 checkpoint may exceed free-instance RAM. A paid instance with sufficient memory or a pre-quantized Jlama-compatible checkpoint is likely required for reliable inference. The 10–30 MB target applies to application overhead, not model weights or inference working memory.
 
