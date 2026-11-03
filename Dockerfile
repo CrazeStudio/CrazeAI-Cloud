@@ -1,13 +1,21 @@
-FROM gradle:8.10.2-jdk21 AS build
-WORKDIR /workspace
-COPY . .
-RUN gradle --no-daemon clean installDist -x test
+FROM ghcr.io/ggml-org/llama.cpp:server
 
-FROM eclipse-temurin:21-jre
 WORKDIR /app
-COPY --from=build /workspace/build/install/crazeai-cloud/ /app/
-ENV PORT=8080
-ENV MODEL_DIR=/var/data/models
-ENV JAVA_TOOL_OPTIONS="--enable-preview --add-modules=jdk.incubator.vector -XX:MaxRAMPercentage=75.0"
+COPY docker-entrypoint.sh /usr/local/bin/crazeai-entrypoint
+RUN chmod +x /usr/local/bin/crazeai-entrypoint
+
+ENV LLAMA_ARG_HOST=0.0.0.0 \
+    LLAMA_ARG_PORT=8080 \
+    LLAMA_ARG_CTX_SIZE=1024 \
+    LLAMA_ARG_N_PARALLEL=1 \
+    LLAMA_ARG_THREADS=1 \
+    LLAMA_ARG_THREADS_BATCH=1 \
+    LLAMA_ARG_BATCH=64 \
+    LLAMA_ARG_UBATCH=32 \
+    LLAMA_ARG_NO_WARMUP=true \
+    LLAMA_ARG_NO_WEBUI=true \
+    LLAMA_ARG_ALIAS=HuggingFaceTB/SmolLM2-135M-Instruct \
+    LLAMA_ARG_MODEL_URL=https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q3_K_M.gguf
+
 EXPOSE 8080
-CMD ["/app/bin/crazeai-cloud"]
+ENTRYPOINT ["/usr/local/bin/crazeai-entrypoint"]
