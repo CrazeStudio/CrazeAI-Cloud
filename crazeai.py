@@ -17,10 +17,10 @@ API_URL = os.environ.get(
 )
 MODEL = "HuggingFaceTB/SmolLM2-135M-Instruct"
 MEMORY_FILE = Path.home() / ".crazeai_memory.jsonl"
-MAX_RECENT_MESSAGES = 10
-MAX_PROMPT_CHARS = 2600
+MAX_RECENT_MESSAGES = 4
+MAX_PROMPT_CHARS = 1400
 MAX_MEMORY_ITEMS = 2
-MAX_REPLY_TOKENS = 160
+MAX_REPLY_TOKENS = 96
 
 SYSTEM_PROMPT = (
     "You are CrazeAI, an assistant created by CrazeStudio. "
@@ -171,7 +171,7 @@ def generate(history, user_text, api_key):
             "max_tokens": MAX_REPLY_TOKENS,
             "temperature": 0.2,
             "top_p": 0.85,
-            "top_k": 20,
+            "top_k": 15,
             "repeat_penalty": 1.15,
             "repeat_last_n": 128,
         }
