@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public final class CrazeAiApplication {
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -86,6 +87,7 @@ public final class CrazeAiApplication {
         if (!INFERENCE_SLOT.tryAcquire()) { sendError(exchange, 429, "The model is busy. Retry shortly.", "rate_limit_error"); return; }
         try {
             JsonNode request = readJson(exchange.getRequestBody());
+            if (request == null || !request.isObject()) { sendError(exchange, 400, "Request body must be a JSON object", "invalid_request_error"); return; }
             JsonNode messages = request.path("messages");
             if (messages == null || !messages.isArray() || messages.isEmpty()) { sendError(exchange, 400, "messages must be a non-empty array", "invalid_request_error"); return; }
             String requestedModel = request.path("model").asText(MODEL_ID);
@@ -104,12 +106,19 @@ public final class CrazeAiApplication {
                 streamCompletion(exchange, id, created, temperature, generationLimit, prompt);
             } else {
                 StringBuilder output = new StringBuilder();
-                model.generate(UUID.randomUUID(), prompt, temperature, generationLimit, (token, timing) -> output.append(token));
+                AtomicInteger completionTokenCount = new AtomicInteger();
+                model.generate(UUID.randomUUID(), prompt, temperature, generationLimit, (token, timing) -> {
+                    output.append(token);
+                    completionTokenCount.incrementAndGet();
+                });
+                int generated = completionTokenCount.get();
                 Map<String, Object> choice = Map.of("index", 0, "message", Map.of("role", "assistant", "content", output.toString()), "finish_reason", "stop");
                 sendJson(exchange, 200, Map.of("id", id, "object", "chat.completion", "created", created,
                     "model", MODEL_ID, "choices", List.of(choice),
-                    "usage", Map.of("prompt_tokens", 0, "completion_tokens", 0, "total_tokens", 0)));
+                    "usage", Map.of("prompt_tokens", promptTokenCount, "completion_tokens", generated, "total_tokens", promptTokenCount + generated)));
             }
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            sendError(exchange, 400, "Malformed JSON request body", "invalid_request_error");
         } catch (IllegalArgumentException e) {
             sendError(exchange, 400, safeMessage(e), "invalid_request_error");
         } catch (Exception e) {
