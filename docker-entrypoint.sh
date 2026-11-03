@@ -2,7 +2,7 @@
 set -eu
 
 if [ -z "${API_KEY:-}" ] && [ -z "${LLAMA_API_KEY:-}" ]; then
-  echo "ERROR: Set API_KEY in Render environment variables." >&2
+  echo "ERROR: Set API_KEY (or LLAMA_API_KEY) in your hosting provider's environment variables." >&2
   exit 1
 fi
 
