@@ -87,21 +87,24 @@ public final class CrazeAiApplication {
         try {
             JsonNode request = readJson(exchange.getRequestBody());
             JsonNode messages = request.path("messages");
-            if (!messages.isArray() || messages.isEmpty()) { sendError(exchange, 400, "messages must be a non-empty array", "invalid_request_error"); return; }
+            if (messages == null || !messages.isArray() || messages.isEmpty()) { sendError(exchange, 400, "messages must be a non-empty array", "invalid_request_error"); return; }
             String requestedModel = request.path("model").asText(MODEL_ID);
             if (!requestedModel.equals(MODEL_ID)) { sendError(exchange, 404, "Model not found: " + requestedModel, "model_not_found"); return; }
             float temperature = (float) request.path("temperature").asDouble(0.7);
             if (temperature < 0 || temperature > 2) { sendError(exchange, 400, "temperature must be between 0 and 2", "invalid_request_error"); return; }
             int maxTokens = Math.max(1, Math.min(request.path("max_tokens").asInt(MAX_TOKENS), MAX_TOKENS));
             PromptContext prompt = buildPrompt(messages);
+            int promptTokenCount = model.getTokenizer().encode(prompt.getPrompt()).length > Integer.MAX_VALUE
+                ? Integer.MAX_VALUE : (int) model.getTokenizer().encode(prompt.getPrompt()).length;
+            int generationLimit = promptTokenCount + maxTokens + 2;
             boolean stream = request.path("stream").asBoolean(false);
             String id = "chatcmpl-" + UUID.randomUUID().toString().replace("-", "");
             long created = Instant.now().getEpochSecond();
             if (stream) {
-                streamCompletion(exchange, id, created, temperature, maxTokens, prompt);
+                streamCompletion(exchange, id, created, temperature, generationLimit, prompt);
             } else {
                 StringBuilder output = new StringBuilder();
-                model.generate(UUID.randomUUID(), prompt, temperature, maxTokens, (token, timing) -> output.append(token));
+                model.generate(UUID.randomUUID(), prompt, temperature, generationLimit, (token, timing) -> output.append(token));
                 Map<String, Object> choice = Map.of("index", 0, "message", Map.of("role", "assistant", "content", output.toString()), "finish_reason", "stop");
                 sendJson(exchange, 200, Map.of("id", id, "object", "chat.completion", "created", created,
                     "model", MODEL_ID, "choices", List.of(choice),
@@ -135,7 +138,7 @@ public final class CrazeAiApplication {
         return PromptContext.of(prompt.toString());
     }
 
-    private static void streamCompletion(HttpExchange exchange, String id, long created, float temperature, int maxTokens, PromptContext prompt) throws IOException {
+    private static void streamCompletion(HttpExchange exchange, String id, long created, float temperature, int generationLimit, PromptContext prompt) throws IOException {
         Headers headers = exchange.getResponseHeaders();
         headers.set("Content-Type", "text/event-stream; charset=utf-8");
         headers.set("Cache-Control", "no-cache, no-transform");
@@ -143,7 +146,7 @@ public final class CrazeAiApplication {
         headers.set("X-Accel-Buffering", "no");
         exchange.sendResponseHeaders(200, 0);
         try (OutputStream out = exchange.getResponseBody()) {
-            model.generate(UUID.randomUUID(), prompt, temperature, maxTokens, (token, timing) -> {
+            model.generate(UUID.randomUUID(), prompt, temperature, generationLimit, (token, timing) -> {
                 try {
                     Map<String, Object> choice = new LinkedHashMap<>();
                     choice.put("index", 0); choice.put("delta", Map.of("content", token)); choice.put("finish_reason", null);
