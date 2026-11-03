@@ -7,11 +7,11 @@ A low-memory, OpenAI-compatible inference API running **llama.cpp** in its offic
 - Runtime: official `ghcr.io/ggml-org/llama.cpp:server` image.
 - Model: `bartowski/Qwen2.5-0.5B-Instruct-GGUF`
 - Quantization: `Q3_K_M` (approximately 355 MB model file).
-- Context: 1,024 tokens (kept conservative for the Render free instance).
-- Parallel requests: 1.
+- Context: 2,048 tokens by default.
+- Parallel requests: 2 (reduce to 1 if the instance runs out of memory).
 - CPU threads: 1.
 - Batch / micro-batch: 64 / 32.
-- Model is downloaded automatically from Hugging Face at startup.
+- Model is downloaded from Hugging Face during the Docker image build and copied into the runtime image.
 
 The model is deliberately small to reduce RAM. It can still hallucinate or misunderstand questions; sampling controls and a system prompt improve consistency but cannot make a small model reliably reason like a much larger model.
 
