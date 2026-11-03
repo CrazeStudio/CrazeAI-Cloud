@@ -8,13 +8,29 @@ services:
     envVars:
       - key: PORT
         value: 8080
-      - key: MODEL_ID
-        value: HuggingFaceTB/SmolLM2-360M-Instruct
-      - key: MODEL_DIR
-        value: /tmp/crazeai-models
-      - key: MODEL_QUANTIZATION
-        value: I8
-      - key: MAX_TOKENS
-        value: 256
       - key: API_KEY
         sync: false
+      - key: LLAMA_ARG_HOST
+        value: 0.0.0.0
+      - key: LLAMA_ARG_PORT
+        value: 8080
+      - key: LLAMA_ARG_CTX_SIZE
+        value: 1024
+      - key: LLAMA_ARG_N_PARALLEL
+        value: 1
+      - key: LLAMA_ARG_THREADS
+        value: 1
+      - key: LLAMA_ARG_THREADS_BATCH
+        value: 1
+      - key: LLAMA_ARG_BATCH
+        value: 64
+      - key: LLAMA_ARG_UBATCH
+        value: 32
+      - key: LLAMA_ARG_NO_WARMUP
+        value: "true"
+      - key: LLAMA_ARG_NO_WEBUI
+        value: "true"
+      - key: LLAMA_ARG_ALIAS
+        value: HuggingFaceTB/SmolLM2-135M-Instruct
+      - key: LLAMA_ARG_MODEL_URL
+        value: https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q3_K_M.gguf
