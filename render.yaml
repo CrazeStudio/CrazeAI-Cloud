@@ -13,7 +13,7 @@ services:
       - key: MODEL_DIR
         value: /tmp/crazeai-models
       - key: MODEL_QUANTIZATION
-        value: Q8
+        value: I8
       - key: MAX_TOKENS
         value: 256
       - key: API_KEY
