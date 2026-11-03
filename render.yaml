@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: crazeai-cloud
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 8080
+      - key: MODEL_ID
+        value: HuggingFaceTB/SmolLM2-360M-Instruct
+      - key: MODEL_DIR
+        value: /tmp/crazeai-models
+      - key: MODEL_QUANTIZATION
+        value: Q4
+      - key: MAX_TOKENS
+        value: 256
+      - key: API_KEY
+        sync: false
