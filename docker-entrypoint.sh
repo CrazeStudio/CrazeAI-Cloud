@@ -11,7 +11,8 @@ export LLAMA_API_KEY="${LLAMA_API_KEY:-$API_KEY}"
 exec /app/llama-server \
   --host "${LLAMA_ARG_HOST:-0.0.0.0}" \
   --port "${PORT:-${LLAMA_ARG_PORT:-8080}}" \
-  --model-url "${LLAMA_ARG_MODEL_URL:?LLAMA_ARG_MODEL_URL is required}" \
+  --hf-repo "bartowski/SmolLM2-135M-Instruct-GGUF" \
+  --hf-file "SmolLM2-135M-Instruct-Q3_K_M.gguf" \
   --alias "${LLAMA_ARG_ALIAS:-HuggingFaceTB/SmolLM2-135M-Instruct}" \
   --ctx-size "${LLAMA_ARG_CTX_SIZE:-1024}" \
   --threads "${LLAMA_ARG_THREADS:-1}" \
