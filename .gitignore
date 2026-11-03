@@ -4,3 +4,5 @@ models/
 *.log
 .env
 .idea/
+__pycache__/
+crazeai_memory.jsonl
