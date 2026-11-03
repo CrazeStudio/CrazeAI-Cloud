@@ -87,3 +87,8 @@ The service uses Render's ephemeral filesystem, so a restart or redeploy may dow
 | `LLAMA_ARG_REPEAT_LAST_N` | 128 | Repetition lookback window |
 
 The previous Gradle/Jlama Java source remains in the repository for reference; Docker runs llama.cpp.
+
+
+### Faster startup
+
+The Qwen GGUF is downloaded during the Docker image build and copied into the final image. The running service loads `/models/Qwen2.5-0.5B-Instruct-Q3_K_M.gguf` locally, so it does not need to download the model again whenever the free Render instance wakes or restarts. This shifts the one-time model download into the image-build step; it does not prevent Render free instances from sleeping, and model initialization still takes time.
