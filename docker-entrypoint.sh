@@ -11,8 +11,7 @@ export LLAMA_API_KEY="${LLAMA_API_KEY:-$API_KEY}"
 exec /app/llama-server \
   --host "${LLAMA_ARG_HOST:-0.0.0.0}" \
   --port "${PORT:-${LLAMA_ARG_PORT:-8080}}" \
-  --hf-repo "bartowski/Qwen2.5-0.5B-Instruct-GGUF" \
-  --hf-file "Qwen2.5-0.5B-Instruct-Q3_K_M.gguf" \
+  --model "/models/Qwen2.5-0.5B-Instruct-Q3_K_M.gguf" \
   --alias "${LLAMA_ARG_ALIAS:-Qwen/Qwen2.5-0.5B-Instruct}" \
   --ctx-size "${LLAMA_ARG_CTX_SIZE:-1024}" \
   --threads "${LLAMA_ARG_THREADS:-1}" \
