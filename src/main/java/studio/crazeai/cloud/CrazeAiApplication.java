@@ -250,7 +250,7 @@ public final class CrazeAiApplication {
         e.sendResponseHeaders(status, body.length);
         try (OutputStream out = e.getResponseBody()) { out.write(body); }
     }
-    private static String safeMessage(Exception e) {
+    private static String safeMessage(Throwable e) {
         String m = e.getMessage(); return m == null || m.isBlank() ? e.getClass().getSimpleName() : m.substring(0, Math.min(m.length(), 300));
     }
     private static String env(String key, String fallback) { String v = System.getenv(key); return v == null || v.isBlank() ? fallback : v.trim(); }
