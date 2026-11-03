@@ -15,7 +15,7 @@ API_URL = os.environ.get(
     "CRAZEAI_URL",
     "https://crazeai-cloud.onrender.com/v1/chat/completions",
 )
-MODEL = "HuggingFaceTB/SmolLM2-135M-Instruct"
+MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 MEMORY_FILE = Path.home() / ".crazeai_memory.jsonl"
 MAX_RECENT_MESSAGES = 4
 MAX_PROMPT_CHARS = 1400
@@ -24,7 +24,7 @@ MAX_REPLY_TOKENS = 96
 
 SYSTEM_PROMPT = (
     "You are CrazeAI, an assistant created by CrazeStudio. "
-    "Your model is SmolLM2-135M-Instruct. Never claim to be Alex or to be "
+    "Your model is Qwen2.5-0.5B-Instruct. Never claim to be Alex or to be "
     "made by Meta, OpenAI, Google, or another organization. "
     "Answer the user's latest question directly and stay on topic. "
     "Do not invent facts, URLs, companies, sources, credentials, or personal "
