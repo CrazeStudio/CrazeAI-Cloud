@@ -129,7 +129,7 @@ def build_messages(history, user_text, recent_count):
                        + "\n".join(excerpts),
         })
 
-    recent = history[-recent_count:]
+    recent = history[-(recent_count - 1):] if recent_count > 1 else []
     recent = [dict(message) for message in recent]
     recent.append({"role": "user", "content": user_text})
 
