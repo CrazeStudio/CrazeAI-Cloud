@@ -28,5 +28,15 @@ services:
         value: q8_0
       - key: LLAMA_ARG_CACHE_TYPE_V
         value: q8_0
+      - key: LLAMA_ARG_TEMP
+        value: 0.2
+      - key: LLAMA_ARG_TOP_P
+        value: 0.85
+      - key: LLAMA_ARG_TOP_K
+        value: 20
+      - key: LLAMA_ARG_REPEAT_PENALTY
+        value: 1.15
+      - key: LLAMA_ARG_REPEAT_LAST_N
+        value: 128
       - key: LLAMA_ARG_ALIAS
         value: HuggingFaceTB/SmolLM2-135M-Instruct
