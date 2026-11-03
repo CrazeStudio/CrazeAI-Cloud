@@ -1,47 +1,56 @@
 # CrazeAI Cloud
 
-Java 21 OpenAI-compatible inference API powered by Jlama. No llama.cpp or Python inference process is used.
+A low-memory, OpenAI-compatible inference API running **llama.cpp** in its official CPU server container.
 
-## Model format compatibility
+## Runtime and model
 
-Jlama loads Hugging Face Transformers/SafeTensors model directories and supports its own Q4/Q8 quantization path. It does not directly load GGUF Q2_K files. The default model is HuggingFaceTB/SmolLM2-360M-Instruct; the service asks Jlama to quantize BF16 model weights to I8 (Jlama's Q8 tensor type) while loading; Q4 is not supported by this BF16 conversion path. If the model configuration or tokenizer template is not accepted by this Jlama release, startup fails rather than silently switching engines.
+- Runtime: official `ghcr.io/ggml-org/llama.cpp:server` image.
+- Model: `bartowski/SmolLM2-135M-Instruct-GGUF`
+- Quantization: `Q3_K_M` (approximately 94 MB model file).
+- Context: 1,024 tokens.
+- Parallel requests: 1.
+- CPU threads: 1.
+- Batch / micro-batch: 64 / 32.
+- The model is downloaded automatically from Hugging Face at startup.
 
-## API endpoints
+This deliberately replaces the previous Java/Jlama + BF16 loading path. Jlama was failing with `UnsupportedOperationException: BF16`; llama.cpp loads a pre-quantized GGUF model directly and avoids the BF16 conversion path. The 135M model is smaller than the previous 360M model, trading some response quality for lower memory usage.
 
-- GET /health — public liveness endpoint used by Render; returns 200 while the HTTP process is running, including during model download
-- GET /ready — public readiness endpoint; returns 503 until the model is fully loaded, then 200
-- GET /v1/models — authenticated model list
-- POST /v1/chat/completions — OpenAI-compatible chat completion, including stream=true SSE
+## API
 
-All /v1 routes require Authorization: Bearer YOUR_API_KEY.
+- `GET /health` — server health.
+- `GET /v1/models` — model list.
+- `POST /v1/chat/completions` — OpenAI-compatible chat completions, including streaming.
 
-Example request body:
+All API routes require `Authorization: Bearer YOUR_API_KEY`.
 
-    {"model":"HuggingFaceTB/SmolLM2-360M-Instruct","messages":[{"role":"user","content":"Hello"}],"max_tokens":96}
+Example:
+
+```bash
+curl https://YOUR-SERVICE.onrender.com/v1/chat/completions \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"HuggingFaceTB/SmolLM2-135M-Instruct","messages":[{"role":"user","content":"Reply exactly: CrazeAI works."}],"max_tokens":48}'
+```
 
 ## Render deployment
 
-1. Create a Blueprint in Render from this repository and apply render.yaml.
-2. Set API_KEY to a long random secret in Render environment variables. The service refuses to start without it.
-3. The HTTP server starts immediately, then the model downloads and loads in a background thread into MODEL_DIR. Watch Render logs for MODEL_DOWNLOAD_STARTED, MODEL_DOWNLOAD_COMPLETE, MODEL_READY, or MODEL_INITIALIZATION_FAILED. HF_TOKEN is optional for gated/private models.
-4. Chat and model-list endpoints return HTTP 503 until Jlama finishes loading. Check /ready to confirm inference readiness.
+1. Deploy this repository as a Docker Web Service using `render.yaml`.
+2. Keep the existing `API_KEY` environment variable; the entrypoint forwards it securely to llama.cpp as `LLAMA_API_KEY`.
+3. Wait for the Hugging Face model download and model-load messages in Render logs.
+4. Test `GET /health`, then `POST /v1/chat/completions`.
 
-Render free filesystems are ephemeral, so restarts/redeploys may download the model again. Free instances also have tight memory limits: loading and quantizing a 360M BF16 checkpoint may exceed free-instance RAM. A paid instance with sufficient memory or a pre-quantized Jlama-compatible checkpoint is likely required for reliable inference. The 10–30 MB target applies to application overhead, not model weights or inference working memory.
+The service uses Render's ephemeral filesystem, so a restart or redeploy may download the model again. Render free instances can sleep when idle. The 1,024-token context and single request slot are intentional memory-saving settings; increase them only if the service has enough RAM.
 
-## Local run
-
-Requires JDK 21 and Gradle 8. Run: export API_KEY='replace-with-a-long-random-secret' then gradle run.
-
-## Environment variables
+## Configuration
 
 | Variable | Default | Purpose |
-|---|---|---|
-| PORT | 8080 | HTTP port |
-| API_KEY | required | Bearer authentication secret |
-| MODEL_ID | HuggingFaceTB/SmolLM2-360M-Instruct | Hugging Face model ID |
-| MODEL_DIR | ./models | Model download/cache directory |
-| MODEL_QUANTIZATION | I8 | Jlama's Q8 tensor type; recommended for BF16 checkpoints |
-| MAX_TOKENS | 256 | Hard cap per completion |
-| HF_TOKEN | unset | Optional Hugging Face token |
+|---|---:|---|
+| `API_KEY` | required | Existing bearer secret; never expose it in source code |
+| `LLAMA_ARG_MODEL_URL` | Q3_K_M GGUF URL | Model file downloaded at startup |
+| `LLAMA_ARG_CTX_SIZE` | 1024 | Maximum context allocation |
+| `LLAMA_ARG_N_PARALLEL` | 1 | One active request slot |
+| `LLAMA_ARG_THREADS` | 1 | CPU inference threads |
+| `LLAMA_ARG_BATCH` | 64 | Prompt batch size |
+| `LLAMA_ARG_UBATCH` | 32 | Physical micro-batch size |
 
-Jlama requires Java 21 preview/vector JVM flags; the Gradle and Docker configurations supply them.
+The previous Gradle/Jlama Java source remains in the repository for reference, but the Docker deployment no longer builds or starts it.
