@@ -27,5 +27,4 @@ exec /app/llama-server \
   --top-k "${LLAMA_ARG_TOP_K:-20}" \
   --repeat-penalty "${LLAMA_ARG_REPEAT_PENALTY:-1.15}" \
   --repeat-last-n "${LLAMA_ARG_REPEAT_LAST_N:-128}" \
-  --no-warmup \
   --no-webui
