@@ -24,6 +24,7 @@ import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 public final class CrazeAiApplication {
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -32,51 +33,103 @@ public final class CrazeAiApplication {
     private static final int MAX_TOKENS = intEnv("MAX_TOKENS", 256);
     private static final Semaphore INFERENCE_SLOT = new Semaphore(1);
     private static volatile AbstractModel model;
+    private static final AtomicReference<String> MODEL_STATE = new AtomicReference<>("starting");
+    private static volatile String modelLoadError = "";
 
     private CrazeAiApplication() {}
 
     public static void main(String[] args) throws Exception {
         if (API_KEY.isBlank()) throw new IllegalStateException("API_KEY is required. Set a long random secret in Render.");
-        loadModel();
         int port = intEnv("PORT", 8080);
         HttpServer server = HttpServer.create(new InetSocketAddress("0.0.0.0", port), 0);
+        var httpExecutor = Executors.newFixedThreadPool(4);
+        var modelExecutor = Executors.newSingleThreadExecutor(r -> {
+            Thread thread = new Thread(r, "crazeai-model-loader");
+            thread.setDaemon(true);
+            return thread;
+        });
         server.createContext("/health", CrazeAiApplication::health);
+        server.createContext("/ready", CrazeAiApplication::ready);
         server.createContext("/v1/models", CrazeAiApplication::models);
         server.createContext("/v1/chat/completions", CrazeAiApplication::chatCompletions);
-        server.setExecutor(Executors.newFixedThreadPool(4));
+        server.setExecutor(httpExecutor);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            modelExecutor.shutdownNow();
+            httpExecutor.shutdownNow();
             try { server.stop(2); } catch (Exception ignored) {}
             AbstractModel current = model;
             if (current != null) current.close();
         }));
+        // Bind the HTTP port before downloading model weights so Render can pass its startup check.
         server.start();
-        System.out.println("CrazeAI Cloud listening on port " + port + " with model " + MODEL_ID);
+        System.out.println("CrazeAI Cloud HTTP server listening on port " + port);
+        modelExecutor.submit(() -> {
+            try {
+                loadModel();
+            } catch (Throwable failure) {
+                MODEL_STATE.set("failed");
+                modelLoadError = safeMessage(failure);
+                System.err.println("MODEL_INITIALIZATION_FAILED: " + modelLoadError);
+                failure.printStackTrace(System.err);
+            }
+        });
     }
 
     private static void loadModel() throws Exception {
+        MODEL_STATE.set("downloading");
         String modelDir = env("MODEL_DIR", "./models");
-        System.out.println("Downloading/checking Hugging Face model: " + MODEL_ID);
+        System.out.println("MODEL_DOWNLOAD_STARTED: " + MODEL_ID + " -> " + modelDir);
         Downloader downloader = new Downloader(modelDir, MODEL_ID);
         String hfToken = env("HF_TOKEN", "");
         if (!hfToken.isBlank()) downloader.withAuthToken(hfToken);
         java.io.File modelPath = downloader.huggingFaceModel();
+        System.out.println("MODEL_DOWNLOAD_COMPLETE: " + modelPath.getAbsolutePath());
+        MODEL_STATE.set("loading");
         DType quantization = DType.valueOf(env("MODEL_QUANTIZATION", "Q4").toUpperCase());
         System.out.println("Loading Jlama model; model quantization=" + quantization);
         model = ModelSupport.loadModel(modelPath, null, DType.F32, DType.I8,
             java.util.Optional.of(quantization), java.util.Optional.empty());
-        System.out.println("Model loaded: " + MODEL_ID + " (" + model.getModelType() + ")");
+        MODEL_STATE.set("ready");
+        modelLoadError = "";
+        System.out.println("MODEL_READY: " + MODEL_ID + " (" + model.getModelType() + ")");
     }
 
+    // Liveness endpoint: Render can reach this while the model downloads.
     private static void health(HttpExchange exchange) throws IOException {
         if (!"GET".equals(exchange.getRequestMethod())) { methodNotAllowed(exchange); return; }
-        sendJson(exchange, model == null ? 503 : 200, Map.of(
-            "status", model == null ? "loading" : "ok", "service", "CrazeAI Cloud",
-            "engine", "Jlama", "model", MODEL_ID, "model_loaded", model != null));
+        sendJson(exchange, 200, Map.of(
+            "status", "ok", "service", "CrazeAI Cloud", "engine", "Jlama",
+            "model", MODEL_ID, "model_state", MODEL_STATE.get(),
+            "model_loaded", model != null));
+    }
+
+    // Readiness endpoint: only returns 200 after Jlama has loaded the model.
+    private static void ready(HttpExchange exchange) throws IOException {
+        if (!"GET".equals(exchange.getRequestMethod())) { methodNotAllowed(exchange); return; }
+        boolean isReady = model != null && "ready".equals(MODEL_STATE.get());
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("status", isReady ? "ready" : MODEL_STATE.get());
+        body.put("service", "CrazeAI Cloud");
+        body.put("model", MODEL_ID);
+        body.put("model_loaded", isReady);
+        if (!isReady && !modelLoadError.isBlank()) body.put("error", modelLoadError);
+        sendJson(exchange, isReady ? 200 : 503, body);
+    }
+
+    private static boolean requireModel(HttpExchange exchange) throws IOException {
+        if (model != null && "ready".equals(MODEL_STATE.get())) return true;
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("error", Map.of("message", "Model is not ready yet. Retry shortly.", "type", "service_unavailable", "code", 503));
+        body.put("model_state", MODEL_STATE.get());
+        if (!modelLoadError.isBlank()) body.put("detail", modelLoadError);
+        sendJson(exchange, 503, body);
+        return false;
     }
 
     private static void models(HttpExchange exchange) throws IOException {
         if (!"GET".equals(exchange.getRequestMethod())) { methodNotAllowed(exchange); return; }
         if (!authorized(exchange)) { unauthorized(exchange); return; }
+        if (!requireModel(exchange)) return;
         sendJson(exchange, 200, Map.of("object", "list", "data", List.of(Map.of(
             "id", MODEL_ID, "object", "model", "created", Instant.now().getEpochSecond(), "owned_by", "crazestudio"))));
     }
@@ -84,6 +137,7 @@ public final class CrazeAiApplication {
     private static void chatCompletions(HttpExchange exchange) throws IOException {
         if (!"POST".equals(exchange.getRequestMethod())) { methodNotAllowed(exchange); return; }
         if (!authorized(exchange)) { unauthorized(exchange); return; }
+        if (!requireModel(exchange)) return;
         if (!INFERENCE_SLOT.tryAcquire()) { sendError(exchange, 429, "The model is busy. Retry shortly.", "rate_limit_error"); return; }
         try {
             JsonNode request = readJson(exchange.getRequestBody());
