@@ -1,101 +1,92 @@
 # CrazeAI Cloud
 
-A low-memory, OpenAI-compatible inference API running **llama.cpp** in its official CPU server container, with a Termux-friendly streaming client.
+A lightweight, OpenAI-compatible inference API powered by the official **llama.cpp server** and a small Qwen2.5 GGUF model. The repository also includes a standard-library-only streaming terminal client for Termux.
 
-## Runtime and model
+## Production architecture
 
-- Runtime: official `ghcr.io/ggml-org/llama.cpp:server` image.
-- Model: `bartowski/Qwen2.5-0.5B-Instruct-GGUF`
-- Quantization: `Q3_K_M` (approximately 355 MB model file).
-- Context: 2,048 tokens by default.
-- Parallel requests: 2 (reduce to 1 if the instance runs out of memory).
-- CPU threads: 1.
-- Batch / micro-batch: 64 / 32.
-- Model is downloaded from Hugging Face during the Docker image build and copied into the runtime image.
+- **Inference engine:** official `ghcr.io/ggml-org/llama.cpp:server` container.
+- **Model:** `bartowski/Qwen2.5-0.5B-Instruct-GGUF`.
+- **Quantization:** `Q3_K_M`.
+- **Default context:** 2,048 tokens.
+- **Default parallel slots:** 2; use 1 on memory-constrained instances.
+- **Model delivery:** downloaded during Docker image build and copied into the runtime image. Container restarts do not download it again.
 
-The model is deliberately small to reduce RAM. It can still hallucinate or misunderstand questions; sampling controls and a system prompt improve consistency but cannot make a small model reliably reason like a much larger model.
+This is a small model intended for low-resource hosting. It can make mistakes and should not be treated as a reliable source of facts.
 
 ## API
 
-- `GET /health` — server health.
-- `GET /ready` — readiness, where supported by the deployed server.
-- `GET /v1/models` — model list.
-- `POST /v1/chat/completions` — OpenAI-compatible chat completions, including SSE streaming.
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/health` | Liveness check |
+| GET | `/ready` | Model readiness, where supported by the server |
+| GET | `/v1/models` | List the configured model |
+| POST | `/v1/chat/completions` | OpenAI-compatible chat completions and SSE streaming |
 
-The API uses `Authorization: Bearer YOUR_API_KEY`.
+Protected endpoints require:
 
-## Improved client
+```http
+Authorization: Bearer YOUR_API_KEY
+```
 
-The repository includes `crazeai.py`, a standard-library-only terminal client suitable for Termux.
+## Deploy on Render
 
-Features:
-- Streams tokens as the server sends them.
-- Sends a strict CrazeAI identity and relevance prompt.
-- Uses conservative sampling settings.
-- Keeps recent messages in active chat history.
-- Archives older messages locally and retrieves only keyword-relevant excerpts.
-- Retries context-overflow errors with progressively shorter history.
-- Keeps the API key out of the source file.
+1. Create a Docker Web Service connected to this repository.
+2. Use the repository-root `Dockerfile`.
+3. Set the health check path to `/health`.
+4. Add `API_KEY` as a private environment variable in the Render dashboard.
+5. Deploy and inspect the logs for model download and server startup.
 
-Run on Termux:
+Do not put API keys in source files, Docker build arguments, or committed configuration. The entrypoint requires `API_KEY` (or `LLAMA_API_KEY`) at runtime.
+
+The model file is roughly 355 MB before runtime overhead. A 512 MB instance may not have enough memory for reliable inference. Monitor memory and reduce parallel slots to 1 if the service is killed for out-of-memory use.
+
+## Deploy on Voroa
+
+See [VOROA.md](VOROA.md) for the dashboard-based Docker deployment steps, environment variables, and verification commands. The entrypoint respects the hosting provider's injected `PORT`.
+
+## Termux client
+
+The `crazeai.py` client uses only Python's standard library and supports streaming, bounded recent chat history, and optional local conversation memory.
 
 ```sh
 pkg install python
 curl -L https://raw.githubusercontent.com/CrazeStudio/CrazeAI-Cloud/main/crazeai.py -o crazeai.py
-python crazeai.py
-```
-
-Optional environment variables:
-
-```sh
 export CRAZEAI_URL=https://crazeai-cloud.onrender.com/v1/chat/completions
-export CRAZEAI_API_KEY='your-api-key'
+export CRAZEAI_API_KEY='your-private-api-key'
 python crazeai.py
 ```
 
-Local memory commands:
-- `/remember TEXT` — save a note explicitly.
+If the key is not set in the environment, the client prompts for it without echoing it.
+
+Commands:
+- `/remember TEXT` — save a local note.
 - `/memory` — show recent saved memory entries.
 - `/forget` — delete local memory.
 - `/clear` — archive the current chat and clear active history.
 - `exit` — quit.
 
-Memory is stored locally on the device, not on the hosting provider.
-
-## Render deployment
-
-Deploy this repository as a Docker Web Service using `render.yaml`. Keep the `API_KEY` environment variable configured in Render. The entrypoint forwards it to llama.cpp as `LLAMA_API_KEY`.
-
-## Voroa deployment
-
-Voroa currently documents Docker service configuration through its dashboard, not a repository YAML manifest like `render.yaml`. Use the exact Voroa service settings, environment variables, port handling, and health check in [VOROA.md](VOROA.md).
-
-The entrypoint reads Voroa's injected `PORT` variable (Voroa Docker services currently use port `3000`). Set the health check path to `/health` and add `API_KEY` as a runtime secret in the Voroa Environment tab. Do not pass secrets as Docker build arguments.
-
-**Memory warning:** the GGUF file is approximately 355 MB before llama.cpp runtime overhead. A 512 MB instance may run out of memory; monitor the service or use a larger memory tier before relying on it.
+Memory is stored on the local device at `~/.crazeai_memory.jsonl`; it is not uploaded as a separate memory store.
 
 ## Configuration
 
 | Variable | Default | Purpose |
 |---|---:|---|
-| `API_KEY` | required | Bearer secret; never expose in source code |
-| `LLAMA_ARG_CTX_SIZE` | 2048 | Maximum context allocation |
-| `LLAMA_ARG_N_PARALLEL` | 2 | Concurrent request slots |
-| `LLAMA_ARG_THREADS` | 1 | CPU inference threads |
+| `API_KEY` | required | Bearer authentication secret |
+| `PORT` | provider-defined / 8080 | HTTP listening port |
+| `LLAMA_ARG_CTX_SIZE` | 2048 | Context allocation |
+| `LLAMA_ARG_N_PARALLEL` | 2 | Concurrent inference slots |
+| `LLAMA_ARG_THREADS` | 1 | CPU threads |
 | `LLAMA_ARG_BATCH` | 64 | Prompt batch size |
-| `LLAMA_ARG_UBATCH` | 32 | Physical micro-batch size |
-| `LLAMA_ARG_TEMP` | 0.2 | Default sampling temperature |
+| `LLAMA_ARG_UBATCH` | 32 | Micro-batch size |
+| `LLAMA_ARG_CACHE_TYPE_K` | q8_0 | K cache quantization |
+| `LLAMA_ARG_CACHE_TYPE_V` | q8_0 | V cache quantization |
+| `LLAMA_ARG_TEMP` | 0.2 | Sampling temperature |
 | `LLAMA_ARG_TOP_P` | 0.85 | Nucleus sampling |
 | `LLAMA_ARG_TOP_K` | 20 | Top-k sampling |
 | `LLAMA_ARG_REPEAT_PENALTY` | 1.15 | Repetition penalty |
-| `LLAMA_ARG_REPEAT_LAST_N` | 128 | Repetition lookback window |
+| `LLAMA_ARG_REPEAT_LAST_N` | 128 | Repetition lookback |
+| `LLAMA_ARG_ALIAS` | Qwen/Qwen2.5-0.5B-Instruct | Public model identifier |
 
-## Faster startup
+## Repository checks
 
-The Qwen GGUF is downloaded during the Docker image build and copied into the final image. The running service loads the model from `/models`, so it does not need to download it again whenever the container restarts. This shifts the one-time model download into the image-build step; model initialization still takes time.
-
-## Concurrent requests
-
-The Docker entrypoint defaults to two llama.cpp parallel slots (`--parallel 2`) and a 2,048-token total context (`--ctx-size 2048`). This allows up to two inference requests to be processed concurrently; additional requests wait for a free slot. Each slot receives a share of the configured context. Monitor memory and reduce parallel slots to 1 if the instance restarts from out-of-memory conditions.
-
-The previous Gradle/Jlama Java source remains in the repository for reference; Docker runs llama.cpp.
+GitHub Actions validates Python syntax and the shell entrypoint on pushes and pull requests. The Docker image build downloads the model, so it is intentionally not repeated as part of the lightweight syntax-validation workflow.

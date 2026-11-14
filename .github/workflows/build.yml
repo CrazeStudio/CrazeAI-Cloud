@@ -1,4 +1,4 @@
-name: Build CrazeAI Cloud
+name: Validate CrazeAI Cloud
 
 on:
   push:
@@ -6,20 +6,25 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
-  build:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Set up Java 21
-        uses: actions/setup-java@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          distribution: temurin
-          java-version: '21'
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.10.2'
-      - name: Compile and package
-        run: gradle --no-daemon clean build
+          python-version: "3.12"
+      - name: Validate Python client
+        run: python -m py_compile crazeai.py
+      - name: Validate Docker entrypoint
+        run: sh -n docker-entrypoint.sh
+      - name: Check deployment files
+        run: |
+          test -s Dockerfile
+          test -s render.yaml
+          test -s docker-entrypoint.sh

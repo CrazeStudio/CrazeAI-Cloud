@@ -1,8 +1,21 @@
-.gradle/
-build/
-models/
-*.log
-.env
-.idea/
+# Python
 __pycache__/
-crazeai_memory.jsonl
+*.py[cod]
+.venv/
+venv/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Runtime model files and local memory
+models/
+*.gguf
+*.log
+.crazeai_memory.jsonl
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
